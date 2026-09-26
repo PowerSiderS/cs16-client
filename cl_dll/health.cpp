@@ -132,7 +132,7 @@ int CHudHealth:: MsgFunc_Health(const char *pszName,  int iSize, void *pbuf )
 	m_iFlags |= HUD_DRAW;
 
 	// Only update the fade if we've changed health
-	if (x != m_iHealth)
+	if (x != m_iHealth && x < 255)
 	{
 		m_fFade = FADE_TIME;
 		m_iHealth = x;
@@ -286,7 +286,7 @@ void CHudHealth::DrawHealthBar( float flTime )
 		if( idx >= 1 && idx <= MAX_PLAYERS && g_PlayerExtraInfo[idx].sb_health > 255 )
 			x = DrawUtils::DrawHudNumber2( x, y, g_PlayerExtraInfo[idx].sb_health, r, g, b );
 		else
-			x = DrawUtils::DrawHudNumber( x, y, DHN_3DIGITS | DHN_DRAWZERO, m_iHealth, r, g, b );
+			x = DrawUtils::DrawHudNumber2(x, y, m_iHealth, r, g, b);
 	}
 }
 
@@ -535,8 +535,15 @@ int CHudHealth::MsgFunc_HealthInfo( const char *pszName, int iSize, void *buf )
 	int health = reader.ReadLong();
 
 	if ( idx >= 1 && idx <= MAX_PLAYERS )
+	{
 		g_PlayerExtraInfo[idx].sb_health = health;
-
+		
+		// TODO: Update local player's HUD health
+		if ( g_PlayerInfoList[idx].thisplayer && health > 255 )
+		{
+			m_iHealth = health;
+		}
+	}
 	return 1;
 }
 
