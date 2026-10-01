@@ -11,6 +11,7 @@
 
 #include "hud.h"
 #include "pm_math.h"
+#include "view_bob.h"
 #include "cl_util.h"
 #include "cvardef.h"
 #include "usercmd.h"
@@ -78,6 +79,10 @@ cvar_t	*v_centerspeed;
 cvar_t	*cl_bobcycle;
 cvar_t	*cl_bob;
 cvar_t	*cl_bobup;
+cvar_t	*cl_bobamt_vert;
+cvar_t	*cl_bobamt_lat;
+cvar_t	*cl_bob_lower_amt;
+cvar_t	*cl_bob_camera;
 cvar_t	*cl_waterdist;
 cvar_t	*cl_chasedist;
 cvar_t	*cl_weaponlag;
@@ -711,7 +716,13 @@ void V_CalcNormalRefdef ( struct ref_params_s *pparams )
 
 	// transform the view offset by the model's matrix to get the offset from
 	// model origin for the view
-	bob = V_CalcBob ( pparams );
+	//
+	// The CSGO style (cl_viewbob 2) drives the view model itself, so the classic camera bob
+	// is left out for it; running both is what made styles 1 and 2 fight each other.
+	if ( !( gHUD.cl_viewbob && (int)gHUD.cl_viewbob->value == BOBSTYLE_MODERN ) )
+		bob = V_CalcBob ( pparams );
+	else
+		bob = 0.0f;
 
 	// refresh position
 	VectorCopy ( pparams->simorg, pparams->vieworg );
@@ -1043,6 +1054,33 @@ void V_CalcNormalRefdef ( struct ref_params_s *pparams )
 			// Store off overridden viewangles
 			v_angles = pparams->viewangles;
 		}
+	}
+
+	// View model bob. Styles 0 and 1 keep the stock sway, style 2 is the CSGO bob.
+	if ( gHUD.cl_viewbob && (int)gHUD.cl_viewbob->value == BOBSTYLE_MODERN )
+	{
+		static bob_modern_state_t s_ModernBob;
+
+		bob_params_t params;
+		params.style = BOBSTYLE_MODERN;
+		params.bob = cl_bob->value;
+		params.bob_cycle = cl_bobcycle->value;
+		params.bob_up = cl_bobup->value;
+		params.amt_vert = cl_bobamt_vert->value;
+		params.amt_lat = cl_bobamt_lat->value;
+		params.lower_amt = cl_bob_lower_amt->value;
+		params.camera_bob = false;
+
+		float flSpeed = sqrt( pparams->simvel[0] * pparams->simvel[0] + pparams->simvel[1] * pparams->simvel[1] );
+		bob_offsets_t offsets = V_PlaceModernBob(
+			V_StepModernBob( s_ModernBob, params, pparams->time, flSpeed, pparams->onground != 0 ) );
+
+		vec3_t front, side, up;
+		AngleVectors( view->angles, front, side, up );
+
+		VectorMA( view->origin, offsets.forward, front, view->origin );
+		view->origin[2] += offsets.up;
+		VectorMA( view->origin, offsets.side, side, view->origin );
 	}
 
 	if ( gHUD.cl_viewbob && gHUD.cl_viewbob->value )
@@ -1885,6 +1923,10 @@ void V_Init (void)
 	cl_bobcycle			= gEngfuncs.pfnRegisterVariable( "cl_bobcycle","0.8", 0 );// best default for my experimental gun wag (sjb)
 	cl_bob				= gEngfuncs.pfnRegisterVariable( "cl_bob","0.01", FCVAR_ARCHIVE );// best default for my experimental gun wag (sjb)
 	cl_bobup			= gEngfuncs.pfnRegisterVariable( "cl_bobup","0.5", 0 );
+	cl_bobamt_vert		= gEngfuncs.pfnRegisterVariable( "cl_bobamt_vert","0.13", FCVAR_ARCHIVE );
+	cl_bobamt_lat		= gEngfuncs.pfnRegisterVariable( "cl_bobamt_lat","0.32", FCVAR_ARCHIVE );
+	cl_bob_lower_amt	= gEngfuncs.pfnRegisterVariable( "cl_bob_lower_amt","8", FCVAR_ARCHIVE );
+	cl_bob_camera		= gEngfuncs.pfnRegisterVariable( "cl_bob_camera","1", FCVAR_ARCHIVE );
 	cl_waterdist		= gEngfuncs.pfnRegisterVariable( "cl_waterdist","4", 0 );
 	cl_chasedist		= gEngfuncs.pfnRegisterVariable( "cl_chasedist","112", 0 );
 
