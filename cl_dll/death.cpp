@@ -21,10 +21,33 @@
 
 #include <string.h>
 #include <stdio.h>
+#include "triangleapi.h"	// triangleapi_s, kRenderTransTexture
 #include "draw_util.h"
 #include "strl.h"
 
 float color[3];
+
+// Extended death message flags, sent by ReGameDLL after the weapon name.
+enum DeathMessageFlags {
+	PLAYERDEATH_POSITION	= 0x001,	// float[3], where the victim was killed
+	PLAYERDEATH_ASSISTANT	= 0x002,	// byte, index of the player who assisted
+	PLAYERDEATH_KILLRARITY	= 0x004	// long, bitsum of KillRarity
+};
+
+// Classification of how rare a kill was. Same values as the KillRarity enum ReGameDLL uses
+// to fill the message; the sprite frame for each flag is its bit position.
+enum KillRarity {
+	KILLRARITY_HEADSHOT			= 0x001, // Headshot
+	KILLRARITY_KILLER_BLIND		= 0x002, // Killer was blind
+	KILLRARITY_NOSCOPE			= 0x004, // No-scope sniper rifle kill
+	KILLRARITY_PENETRATED		= 0x008, // Penetrated kill (through walls)
+	KILLRARITY_THRUSMOKE		= 0x010, // Smoke grenade penetration kill (bullets went through smoke)
+	KILLRARITY_ASSISTEDFLASH	= 0x020, // Assister helped with a flash
+	KILLRARITY_DOMINATION_BEGAN	= 0x040, // Killer player began dominating the victim (NOTE: this flag is set once)
+	KILLRARITY_DOMINATION		= 0x080, // Continues domination by the killer
+	KILLRARITY_REVENGE			= 0x100, // Revenge by the killer
+	KILLRARITY_INAIR			= 0x200  // Killer was in the air (skill to deal with high inaccuracy)
+};
 
 struct DeathNoticeItem {
 	char szKiller[MAX_PLAYER_NAME_LENGTH*2];
@@ -38,7 +61,8 @@ struct DeathNoticeItem {
 	float flDisplayTime;
 	float *KillerColor;
 	float *VictimColor;
-	int iHeadShotId;
+	int iKillRarity;		// bitsum of KillRarity, 0 when the server sent none
+	int iAssistantId;		// index of the player who assisted, 0 when nobody did
 	float flSpawnTime;  // when the notice was added, used to fade it in
 };
 
@@ -68,6 +92,24 @@ static int DEATHNOTICE_DISPLAY_TIME = 6;
 // Full strength when the time comes after the notice's lifetime has nearly run out.
 #define DEATHNOTICE_FADE_OUT_GRACE		( DEATHNOTICE_DISPLAY_TIME - DEATHNOTICE_FADE_OUT )
 
+// Kill rarity icons, one TGA per flag.
+#define DEATHNOTICE_RARITY_PATH		"gfx/killfeed/"
+#define DEATHNOTICE_RARITY_SIZE			24
+#define DEATHNOTICE_RARITY_PAD_X		3
+
+static const char *const kRarityIconFiles[RARITYICON_COUNT] =
+{
+	"headshot.tga",
+	"blind.tga",
+	"noscope.tga",
+	"wallbang.tga",
+	"smoke.tga",
+	"flash_assist.tga",
+	"dominate.tga",
+	"revenge.tga",
+	"inair.tga"
+};
+
 DeathNoticeItem rgDeathNoticeList[ MAX_DEATHNOTICES + 1 ];
 
 cvar_t *cl_killsound;
@@ -75,8 +117,7 @@ cvar_t *cl_killsound_path;
 cvar_t *hud_deathnotice_boxes;
 cvar_t *hud_deathnotice_fade;
 
-// Draws a filled rectangle blended against what is already on screen.
-// Negative coordinates are clipped by the engine, so clamp first.
+// Clips negative coordinates, which the engine does not handle.
 static void DeathNoticeFillRect( int x, int y, int w, int h, int r, int g, int b, int a )
 {
 	if ( w <= 0 || h <= 0 || a <= 0 )
@@ -90,7 +131,6 @@ static void DeathNoticeFillRect( int x, int y, int w, int h, int r, int g, int b
 	FillRGBABlend( x, y, w, h, r, g, b, a );
 }
 
-// Draws a rectangle outline of the given thickness, fully inside the given bounds.
 static void DeathNoticeDrawOutlineRect( int x, int y, int w, int h,
 	int r, int g, int b, int a, int thickness )
 {
@@ -98,10 +138,40 @@ static void DeathNoticeDrawOutlineRect( int x, int y, int w, int h,
 	if ( thickness <= 0 )
 		return;
 
-	DeathNoticeFillRect( x, y, w, thickness, r, g, b, a );						// top
-	DeathNoticeFillRect( x, y + h - thickness, w, thickness, r, g, b, a );		// bottom
-	DeathNoticeFillRect( x, y + thickness, thickness, h - thickness * 2, r, g, b, a );	// left
-	DeathNoticeFillRect( x + w - thickness, y + thickness, thickness, h - thickness * 2, r, g, b, a );	// right
+	DeathNoticeFillRect( x, y, w, thickness, r, g, b, a );
+	DeathNoticeFillRect( x, y + h - thickness, w, thickness, r, g, b, a );
+	DeathNoticeFillRect( x, y + thickness, thickness, h - thickness * 2, r, g, b, a );
+	DeathNoticeFillRect( x + w - thickness, y + thickness, thickness, h - thickness * 2, r, g, b, a );
+}
+
+static int DeathNoticeRarityWidth( void )
+{
+	return DEATHNOTICE_RARITY_SIZE + DEATHNOTICE_RARITY_PAD_X * 2;
+}
+
+static int DeathNoticeRarityHeight( void )
+{
+	return DEATHNOTICE_RARITY_SIZE;
+}
+
+// The "+" that joins the assistant onto the killer.
+static const char *const kKillAssistSeparator = "+";
+
+static int DeathNoticeDrawRarity( int hTexture, int x, int y, int a )
+{
+	const int draw_x = x + DEATHNOTICE_RARITY_PAD_X;
+
+	gRenderAPI.GL_SelectTexture( 0 );
+	gRenderAPI.GL_Bind( 0, hTexture );
+	gEngfuncs.pTriAPI->RenderMode( kRenderTransTexture );
+	gEngfuncs.pTriAPI->Color4f( 1.0f, 1.0f, 1.0f, a / 255.0f );
+
+	// Draw2DQuad takes scaled coordinates; the HUD's other 2D quads all do this.
+	DrawUtils::Draw2DQuad( draw_x * gHUD.m_flScale, y * gHUD.m_flScale,
+		( draw_x + DEATHNOTICE_RARITY_SIZE ) * gHUD.m_flScale,
+		( y + DEATHNOTICE_RARITY_SIZE ) * gHUD.m_flScale );
+
+	return draw_x + DEATHNOTICE_RARITY_SIZE + DEATHNOTICE_RARITY_PAD_X;
 }
 
 // Returns the alpha the notice row should be drawn with: transparent when it just
@@ -152,9 +222,25 @@ void CHudDeathNotice :: InitHUDData( void )
 int CHudDeathNotice :: VidInit( void )
 {
 	m_HUD_d_skull = gHUD.GetSpriteIndex( "d_skull" );
-	m_HUD_d_headshot = gHUD.GetSpriteIndex("d_headshot");
+
+	char szPath[256];
+
+	for( int i = 0; i < RARITYICON_COUNT; i++ )
+	{
+		snprintf( szPath, sizeof( szPath ), "%s%s", DEATHNOTICE_RARITY_PATH, kRarityIconFiles[i] );
+		m_hRarityIcons[i] = gRenderAPI.GL_LoadTexture( szPath, NULL, 0, TF_NEAREST | TF_NOMIPMAP | TF_CLAMP );
+	}
 
 	return 1;
+}
+
+void CHudDeathNotice :: Shutdown( void )
+{
+	for( int i = 0; i < RARITYICON_COUNT; i++ )
+	{
+		gRenderAPI.GL_FreeTexture( m_hRarityIcons[i] );
+		m_hRarityIcons[i] = 0;
+	}
 }
 
 int CHudDeathNotice :: Draw( float flTime )
@@ -188,20 +274,36 @@ int CHudDeathNotice :: Draw( float flTime )
 			// Draw the death notice
 
 			int id = (rgDeathNoticeList[i].iId == -1) ? m_HUD_d_skull : rgDeathNoticeList[i].iId;
+			int iRarity = rgDeathNoticeList[i].iKillRarity;
+
+			// Width of every rarity icon in the row, for the box size.
+			int rarity_w = 0;
+			if( iRarity )
+			{
+				for( int iFlag = KILLRARITY_HEADSHOT; iFlag <= KILLRARITY_INAIR; iFlag <<= 1 )
+				{
+					if( iRarity & iFlag )
+						rarity_w += DeathNoticeRarityWidth();
+				}
+			}
 
 			const int weapon_w = gHUD.GetSpriteRect( id ).Width();
-			const int headshot_w = rgDeathNoticeList[i].iHeadShotId ? gHUD.GetSpriteRect( m_HUD_d_headshot ).Width() : 0;
-			const int killer_w = rgDeathNoticeList[i].bSuicide ? 0 : DrawUtils::ConsoleStringLen( rgDeathNoticeList[i].szKiller );
-			const int victim_w = rgDeathNoticeList[i].bNonPlayerKill ? 0 : DrawUtils::ConsoleStringLen( rgDeathNoticeList[i].szVictim );
 
-			// Build the row right to left: [ killer ] [ weapon ] [ victim ], the whole row
-			// wrapped in a box that is right aligned against the screen edge.
-			const int row_w = weapon_w + headshot_w
-				+ ( killer_w ? killer_w + DEATHNOTICE_NAME_GAP : 0 )
-				+ ( victim_w ? victim_w + DEATHNOTICE_NAME_GAP : 0 );
+			bool bAssistant = rgDeathNoticeList[i].iAssistantId >= 1 && rgDeathNoticeList[i].iAssistantId <= MAX_PLAYERS;
+			const char *assistant_name = bAssistant ? g_PlayerInfoList[ rgDeathNoticeList[i].iAssistantId ].name : NULL;
+			const float *assistant_color = bAssistant ? GetClientColor( rgDeathNoticeList[i].iAssistantId ) : NULL;
 
+			const int killer_w = rgDeathNoticeList[i].bSuicide ? 0 : DrawUtils::ConsoleStringLen( rgDeathNoticeList[i].szKiller ) + DEATHNOTICE_NAME_GAP * 2;
+			const int victim_w = rgDeathNoticeList[i].bNonPlayerKill ? 0 : DrawUtils::ConsoleStringLen( rgDeathNoticeList[i].szVictim ) + DEATHNOTICE_NAME_GAP * 2;
+			const int assistant_w = assistant_name ? DrawUtils::ConsoleStringLen( kKillAssistSeparator ) + DrawUtils::ConsoleStringLen( assistant_name ) + DEATHNOTICE_NAME_GAP * 2 : 0;
+
+			const int row_w = rarity_w + weapon_w + killer_w + assistant_w + victim_w;
 			const int box_w = row_w + DEATHNOTICE_BOX_PAD_X * 2;
-			const int box_h = gHUD.m_iFontHeight + DEATHNOTICE_BOX_PAD_TOP + DEATHNOTICE_BOX_PAD_BOTTOM;
+
+			// The rarity icon is taller than a line of text, so the row grows to hold it.
+			const int text_h = gHUD.m_iFontHeight + DEATHNOTICE_BOX_PAD_TOP + DEATHNOTICE_BOX_PAD_BOTTOM;
+			const int rarity_h = rarity_w ? DeathNoticeRarityHeight() : 0;
+			const int box_h = max( text_h, rarity_h );
 			const int box_x = ScreenWidth - DEATHNOTICE_RIGHT - box_w;
 
 			if( !g_iUser1 )
@@ -214,19 +316,18 @@ int CHudDeathNotice :: Draw( float flTime )
 			}
 
 			x = box_x + DEATHNOTICE_BOX_PAD_X;
-			const int name_y = y + DEATHNOTICE_BOX_PAD_TOP;
+
+			const int name_y = y + ( box_h - gHUD.m_iFontHeight ) / 2;
+			const int rarity_y = y + ( box_h - rarity_h ) / 2;
 
 			if( hud_deathnotice_boxes->value )
 			{
 				if( rgDeathNoticeList[i].bVictimHighlight )
 				{
-					// We were killed: solid red box, like NextClient's dead highlight.
 					DeathNoticeFillRect( box_x, y, box_w, box_h, (int)( 150 * flRowScale ), 0, (int)( 20 * flRowScale ), iRowAlpha );
 				}
 				else
 				{
-					// Translucent black fill; only the outline differs: red for our own kill,
-					// black for everybody else's, matching the NextClient death notice.
 					DeathNoticeFillRect( box_x, y, box_w, box_h, 0, 0, 0, iRowAlpha * 100 / 255 );
 
 					if( rgDeathNoticeList[i].bKillerHighlight )
@@ -236,35 +337,59 @@ int CHudDeathNotice :: Draw( float flTime )
 				}
 			}
 
-			if ( !rgDeathNoticeList[i].bSuicide )
-			{
-				// Draw killers name
-				if ( rgDeathNoticeList[i].KillerColor )
-					DrawUtils::SetConsoleTextColor( rgDeathNoticeList[i].KillerColor[0] * flRowScale, rgDeathNoticeList[i].KillerColor[1] * flRowScale, rgDeathNoticeList[i].KillerColor[2] * flRowScale );
-				x = DrawUtils::DrawConsoleString( x, name_y, rgDeathNoticeList[i].szKiller ) + DEATHNOTICE_NAME_GAP;
-			}
-
-			// Icons are always pure white. They are additive sprites with no alpha, so the fade
-			// is applied by darkening them; the headshot icon keeps its full colour so it does
-			// not read as grey next to the weapon icon.
 			const int iIconFade = (int)( 255 * flRowScale );
 
-			// Draw death weapon
+			// Icons are laid out by what they describe, matching NextClient.
+			if( iRarity & KILLRARITY_DOMINATION )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_DOMINATE], x, rarity_y, iRowAlpha );
+			else if( iRarity & KILLRARITY_REVENGE )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_REVENGE], x, rarity_y, iRowAlpha );
+
+			if( iRarity & KILLRARITY_KILLER_BLIND )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_BLIND], x, rarity_y, iRowAlpha );
+
+			if ( !rgDeathNoticeList[i].bSuicide )
+			{
+				if ( rgDeathNoticeList[i].KillerColor )
+					DrawUtils::SetConsoleTextColor( rgDeathNoticeList[i].KillerColor[0] * flRowScale, rgDeathNoticeList[i].KillerColor[1] * flRowScale, rgDeathNoticeList[i].KillerColor[2] * flRowScale );
+				x = DrawUtils::DrawConsoleString( x + DEATHNOTICE_NAME_GAP, name_y, rgDeathNoticeList[i].szKiller ) + DEATHNOTICE_NAME_GAP;
+			}
+
+			if( assistant_name )
+			{
+				DrawUtils::SetConsoleTextColor( flRowScale, flRowScale, flRowScale );
+				x = DrawUtils::DrawConsoleString( x + DEATHNOTICE_NAME_GAP, name_y, kKillAssistSeparator ) + DEATHNOTICE_NAME_GAP;
+
+				if( iRarity & KILLRARITY_ASSISTEDFLASH )
+					x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_FLASH_ASSIST], x, rarity_y, iRowAlpha );
+
+				if( assistant_color )
+					DrawUtils::SetConsoleTextColor( assistant_color[0] * flRowScale, assistant_color[1] * flRowScale, assistant_color[2] * flRowScale );
+
+				x = DrawUtils::DrawConsoleString( x + DEATHNOTICE_NAME_GAP, name_y, assistant_name ) + DEATHNOTICE_NAME_GAP;
+			}
+
+			if( iRarity & KILLRARITY_INAIR )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_INAIR], x, rarity_y - rarity_h / 2, iRowAlpha );
+
 			const int weapon_y = y + ( box_h - gHUD.GetSpriteRect( id ).Height() ) / 2;
 			SPR_Set( gHUD.GetSprite(id), iIconFade, iIconFade, iIconFade );
 			SPR_DrawAdditive( 0, x, weapon_y, &gHUD.GetSpriteRect(id) );
 
 			x += weapon_w;
 
-			if( rgDeathNoticeList[i].iHeadShotId)
-			{
-				const int headshot_y = y + ( box_h - gHUD.GetSpriteRect( m_HUD_d_headshot ).Height() ) / 2;
-				SPR_Set( gHUD.GetSprite(m_HUD_d_headshot), 255, 255, 255 );
-				SPR_DrawAdditive( 0, x, headshot_y, &gHUD.GetSpriteRect(m_HUD_d_headshot));
-				x += headshot_w;
-			}
+			if( iRarity & KILLRARITY_NOSCOPE )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_NOSCOPE], x, rarity_y, iRowAlpha );
 
-			// Draw victims name (if it was a player that was killed)
+			if( iRarity & KILLRARITY_THRUSMOKE )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_SMOKE], x, rarity_y, iRowAlpha );
+
+			if( iRarity & KILLRARITY_PENETRATED )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_WALLBANG], x, rarity_y, iRowAlpha );
+
+			if( iRarity & KILLRARITY_HEADSHOT )
+				x = DeathNoticeDrawRarity( m_hRarityIcons[RARITYICON_HEADSHOT], x, rarity_y, iRowAlpha );
+
 			if (!rgDeathNoticeList[i].bNonPlayerKill)
 			{
 				if ( rgDeathNoticeList[i].VictimColor )
@@ -294,6 +419,29 @@ int CHudDeathNotice :: MsgFunc_DeathMsg( const char *pszName, int iSize, void *p
 	char killedwith[32];
 	strlcpy( killedwith, "d_", sizeof( killedwith ) );
 	strlcat( killedwith, reader.ReadString(), sizeof( killedwith ) );
+
+	// ReGameDLL appends the extended death message fields after the weapon name. A vanilla
+	// server stops here, so everything below is read only while the buffer still has data.
+	int kill_rarity = headshot ? KILLRARITY_HEADSHOT : 0;
+	int assistant = 0;
+
+	if( reader.Valid() )
+	{
+		const int extra_flags = reader.ReadLong();
+
+		if( extra_flags & PLAYERDEATH_POSITION )
+		{
+			reader.ReadCoord();
+			reader.ReadCoord();
+			reader.ReadCoord();
+		}
+
+		if( extra_flags & PLAYERDEATH_ASSISTANT )
+			assistant = reader.ReadByte();
+
+		if( extra_flags & PLAYERDEATH_KILLRARITY )
+			kill_rarity = reader.ReadLong();
+	}
 
 	//if (gViewPort)
 	//	gViewPort->DeathMsg( killer, victim );
@@ -379,7 +527,14 @@ int CHudDeathNotice :: MsgFunc_DeathMsg( const char *pszName, int iSize, void *p
 			rgDeathNoticeList[i].bTeamKill = true;
 	}
 
-	rgDeathNoticeList[i].iHeadShotId = headshot;
+	// Being dominated again is only worth showing to the player who is being dominated when
+	// the domination starts; the repeats are noise. Same rule as NextClient.
+	if( ( kill_rarity & KILLRARITY_DOMINATION ) && victim_this_player && !( kill_rarity & KILLRARITY_DOMINATION_BEGAN ) )
+		kill_rarity &= ~KILLRARITY_DOMINATION;
+
+	rgDeathNoticeList[i].iKillRarity = kill_rarity;
+
+	rgDeathNoticeList[i].iAssistantId = assistant;
 
 	// Find the sprite in the list
 	int spr = gHUD.GetSpriteIndex( killedwith );

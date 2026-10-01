@@ -501,18 +501,34 @@ extern int					g_IsSpectator[MAX_PLAYERS+1];
 //
 //-----------------------------------------------------
 //
+// One TGA per KillRarity flag, in flag bit order.
+enum KillRarityIcon
+{
+	RARITYICON_HEADSHOT,
+	RARITYICON_BLIND,
+	RARITYICON_NOSCOPE,
+	RARITYICON_WALLBANG,
+	RARITYICON_SMOKE,
+	RARITYICON_FLASH_ASSIST,
+	RARITYICON_DOMINATE,
+	RARITYICON_REVENGE,
+	RARITYICON_INAIR,
+	RARITYICON_COUNT
+};
+
 class CHudDeathNotice : public CHudBase
 {
 public:
 	int Init( void );
 	void InitHUDData( void );
 	int VidInit( void );
+	void Shutdown( void );
 	int Draw( float flTime );
 	CHudMsgFunc(DeathMsg);
 
 private:
 	int m_HUD_d_skull;  // sprite index of skull icon
-	int m_HUD_d_headshot;
+	int m_hRarityIcons[RARITYICON_COUNT];  // TGA textures
 	cvar_t *hud_deathnotice_time;
 };
 
