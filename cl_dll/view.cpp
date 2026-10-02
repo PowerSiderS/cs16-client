@@ -83,6 +83,9 @@ cvar_t	*cl_bobamt_vert;
 cvar_t	*cl_bobamt_lat;
 cvar_t	*cl_bob_lower_amt;
 cvar_t	*cl_bob_camera;
+cvar_t	*e_viewmodel_fov;
+cvar_t	*e_viewmodel_up;
+cvar_t	*e_viewmodel_right;
 cvar_t	*cl_waterdist;
 cvar_t	*cl_chasedist;
 cvar_t	*cl_weaponlag;
@@ -603,7 +606,7 @@ void V_CalcQuakeGuns()
 
 	if(!cl_quakeguns->value)
 		return;
-	
+
 	if(!vm)
 		return;
 
@@ -909,6 +912,25 @@ void V_CalcNormalRefdef ( struct ref_params_s *pparams )
 	else if (pparams->viewsize == 80)
 	{
 		view->origin[2] += 0.5;
+	}
+
+	if ( e_viewmodel_fov->value != 0.0f || e_viewmodel_up->value != 0.0f || e_viewmodel_right->value != 0.0f )
+	{
+		vec3_t vmfront, vmright, vmup;
+		AngleVectors( pparams->viewangles, vmfront, vmright, vmup );
+
+		// Positive values bring the weapon closer, negative push it away.
+		float flForward = e_viewmodel_fov->value * 0.1f;
+
+		// The view model is mirrored when the player uses the left hand, so mirror the
+		// right/left offset too, otherwise it stays on the right side of the screen.
+		float flRight = e_viewmodel_right->value;
+		if( gHUD.cl_righthand && gHUD.cl_righthand->value <= 0.0f )
+			flRight = -flRight;
+
+		VectorMA( view->origin, flForward, vmfront, view->origin );
+		VectorMA( view->origin, flRight, vmright, view->origin );
+		VectorMA( view->origin, e_viewmodel_up->value, vmup, view->origin );
 	}
 
 	// Don't allow viewmodel, if we are in sniper scope
@@ -1766,7 +1788,7 @@ void V_CalcSpectatorRefdef ( struct ref_params_s * pparams )
 		case INSET_CHASE_LOCKED:
 			V_GetChasePos( g_iUser2, NULL, v_origin, v_angles );
 			break;
-		
+
 		case INSET_CHASE_FREE:
 			V_GetChasePos( g_iUser2, v_cl_angles, v_origin, v_angles );
 			break;
@@ -1927,6 +1949,11 @@ void V_Init (void)
 	cl_bobamt_lat		= gEngfuncs.pfnRegisterVariable( "cl_bobamt_lat","0.32", FCVAR_ARCHIVE );
 	cl_bob_lower_amt	= gEngfuncs.pfnRegisterVariable( "cl_bob_lower_amt","8", FCVAR_ARCHIVE );
 	cl_bob_camera		= gEngfuncs.pfnRegisterVariable( "cl_bob_camera","1", FCVAR_ARCHIVE );
+
+	e_viewmodel_fov		= gEngfuncs.pfnRegisterVariable( "e_viewmodel_fov", "0", FCVAR_ARCHIVE );
+	e_viewmodel_up		= gEngfuncs.pfnRegisterVariable( "e_viewmodel_up", "0.0", FCVAR_ARCHIVE );
+	e_viewmodel_right	= gEngfuncs.pfnRegisterVariable( "e_viewmodel_right", "0.0", FCVAR_ARCHIVE );
+	
 	cl_waterdist		= gEngfuncs.pfnRegisterVariable( "cl_waterdist","4", 0 );
 	cl_chasedist		= gEngfuncs.pfnRegisterVariable( "cl_chasedist","112", 0 );
 
