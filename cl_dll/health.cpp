@@ -66,6 +66,8 @@ int CHudHealth::Init(void)
 	HOOK_MESSAGE( gHUD.m_Health, Account );
 
 	m_iHealth = 100;
+	m_iHealthDisp = 100;
+	m_fHealthTransitionTime = 0;
 	m_fFade = 0;
 	m_iFlags = 0;
 	m_bitsDamage = 0;
@@ -136,6 +138,8 @@ int CHudHealth:: MsgFunc_Health(const char *pszName,  int iSize, void *pbuf )
 	{
 		m_fFade = FADE_TIME;
 		m_iHealth = x;
+		// kick off the smooth numeric transition
+		m_fHealthTransitionTime = 0.35f;
 	}
 
 	return 1;
@@ -242,7 +246,7 @@ void CHudHealth::GetPainColor( int &r, int &g, int &b, int &a )
 		g = 0;
 		b = 0;
 	}
-#endif 
+#endif
 }
 
 
@@ -283,10 +287,29 @@ void CHudHealth::DrawHealthBar( float flTime )
 
 		int idx = gEngfuncs.GetLocalPlayer()->index;
 
+		// Smoothly interpolate the displayed health toward the authoritative value
+		if( m_fHealthTransitionTime > 0 )
+		{
+			m_fHealthTransitionTime -= gHUD.m_flTimeDelta;
+			if( m_fHealthTransitionTime <= 0 )
+			{
+				m_fHealthTransitionTime = 0;
+				m_iHealthDisp = m_iHealth;
+			}
+			else
+			{
+				int delta = m_iHealth - m_iHealthDisp;
+				int step = (int)(delta * (gHUD.m_flTimeDelta / 0.35f));
+				if( step == 0 )
+					step = (delta > 0) ? 1 : -1;
+				m_iHealthDisp += step;
+			}
+		}
+
 		if( idx >= 1 && idx <= MAX_PLAYERS && g_PlayerExtraInfo[idx].sb_health > 255 )
 			x = DrawUtils::DrawHudNumber2( x, y, g_PlayerExtraInfo[idx].sb_health, r, g, b );
 		else
-			x = DrawUtils::DrawHudNumber2(x, y, m_iHealth, r, g, b);
+			x = DrawUtils::DrawHudNumber2(x, y, m_iHealthDisp, r, g, b);
 	}
 }
 
@@ -416,12 +439,12 @@ void CHudHealth::DrawDamage(float flTime)
 
 
 void CHudHealth::UpdateTiles(float flTime, long bitsDamage)
-{	
+{
 	DAMAGE_IMAGE *pdmg;
 
 	// Which types are new?
 	long bitsOn = ~m_bitsDamage & bitsDamage;
-	
+
 	for (int i = 0; i < NUM_DMG_TYPES; i++)
 	{
 		pdmg = &m_dmg[i];
@@ -441,7 +464,7 @@ void CHudHealth::UpdateTiles(float flTime, long bitsDamage)
 			pdmg->x = giDmgWidth/8;
 			pdmg->y = ScreenHeight - giDmgHeight * 2;
 			pdmg->fExpire=flTime + DMG_IMAGE_LIFE;
-			
+
 			// move everyone else up
 			for (int j = 0; j < NUM_DMG_TYPES; j++)
 			{
@@ -537,10 +560,12 @@ int CHudHealth::MsgFunc_HealthInfo( const char *pszName, int iSize, void *buf )
 	if ( idx >= 1 && idx <= MAX_PLAYERS )
 	{
 		g_PlayerExtraInfo[idx].sb_health = health;
-		
+
 		// TODO: Update local player's HUD health
 		if ( g_PlayerInfoList[idx].thisplayer && health > 255 )
 		{
+			if( health != m_iHealth )
+				m_fHealthTransitionTime = 0.35f;
 			m_iHealth = health;
 		}
 	}

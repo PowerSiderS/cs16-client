@@ -26,6 +26,8 @@
 int CHudBattery::Init( void )
 {
 	m_iBat = 0;
+	m_iBatDisp = 0;
+	m_fBatTransitionTime = 0;
 	m_fFade = 0;
 	m_iFlags = 0;
 	m_enArmorType = Vest;
@@ -62,6 +64,8 @@ int CHudBattery:: MsgFunc_Battery(const char *pszName, int iSize, void *pbuf )
 	{
 		m_fFade = FADE_TIME;
 		m_iBat = x;
+		// kick off the smooth numeric transition for the armor value
+		m_fBatTransitionTime = 0.35f;
 		if( m_iBat < 0 )
 			m_enArmorType = Vest;
 	}
@@ -82,8 +86,27 @@ int CHudBattery::Draw( float flTime )
 
 	rc = m_hEmpty[m_enArmorType].rect;
 
+	// Smoothly interpolate the displayed armor toward the authoritative value
+	if( m_fBatTransitionTime > 0 )
+	{
+		m_fBatTransitionTime -= gHUD.m_flTimeDelta;
+		if( m_fBatTransitionTime <= 0 )
+		{
+			m_fBatTransitionTime = 0;
+			m_iBatDisp = m_iBat;
+		}
+		else
+		{
+			int delta = m_iBat - m_iBatDisp;
+			int step = (int)(delta * (gHUD.m_flTimeDelta / 0.35f));
+			if( step == 0 )
+				step = (delta > 0) ? 1 : -1;
+			m_iBatDisp += step;
+		}
+	}
+
 	// battery can go from 0 to 100 so * 0.01 goes from 0 to 1
-	rc.top += m_iHeight * ((float)( 100 - ( min( 100, m_iBat ))) * 0.01f );
+	rc.top += m_iHeight * ((float)( 100 - ( min( 100, m_iBatDisp ))) * 0.01f );
 
 	DrawUtils::UnpackRGB( r, g, b, gHUD.m_iDefaultHUDColor );
 
@@ -109,7 +132,7 @@ int CHudBattery::Draw( float flTime )
 	}
 
 	DrawUtils::ScaleColors( r, g, b, a );
-	
+
 	y = ScreenHeight - gHUD.m_iFontHeight - gHUD.m_iFontHeight / 2;
 	x = ScreenWidth / 5;
 
@@ -124,7 +147,7 @@ int CHudBattery::Draw( float flTime )
 	}
 
 	x += (m_hEmpty[m_enArmorType].rect.Width());
-	x = DrawUtils::DrawHudNumber( x, y, DHN_3DIGITS|DHN_DRAWZERO, m_iBat, r, g, b );
+	x = DrawUtils::DrawHudNumber( x, y, DHN_3DIGITS|DHN_DRAWZERO, m_iBatDisp, r, g, b );
 
 	return 1;
 }

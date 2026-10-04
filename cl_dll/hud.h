@@ -611,6 +611,8 @@ private:
 	CClientSprite m_hEmpty[VestHelm + 1];
 	CClientSprite m_hFull[VestHelm + 1];
 	int	  m_iBat;
+	int	  m_iBatDisp;	// smoothly interpolated displayed armor
+	float m_fBatTransitionTime;	// time remaining to finish the armor transition
 	float m_fFade;
 	int	  m_iHeight;		// width of the battery innards
 };
@@ -782,6 +784,8 @@ public:
 
 private:
 	int m_iMoneyCount;
+	int m_iMoneyCountDisp;	// smoothly interpolated displayed money
+	float m_fMoneyTransitionTime;	// time remaining to finish the money transition
 	int m_iDelta;
 	int m_iBlinkAmt;
 	float m_fBlinkTime;

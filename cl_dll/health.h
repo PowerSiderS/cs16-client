@@ -124,6 +124,8 @@ public:
 	int MsgFunc_Account( const char *pszName, int iSize, void *pbuf );
 
 	int m_iHealth;
+	int m_iHealthDisp;	// smoothly interpolated displayed health
+	float m_fHealthTransitionTime;	// time remaining to finish the health transition
 	int m_HUD_dmg_bio;
 	int m_HUD_cross;
 	//float m_fAttackFront, m_fAttackRear, m_fAttackLeft, m_fAttackRight;

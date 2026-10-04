@@ -45,6 +45,9 @@ int CHudMoney::Init( )
 	HOOK_MESSAGE( gHUD.m_Money, Money );
 	HOOK_MESSAGE( gHUD.m_Money, BlinkAcct );
 	gHUD.AddHudElem(this);
+	m_iMoneyCount = 0;
+	m_iMoneyCountDisp = 0;
+	m_fMoneyTransitionTime = 0;
 	m_fFade = 0;
 	m_iFlags = 0;
 	return 1;
@@ -78,6 +81,26 @@ int CHudMoney::Draw(float flTime)
 		m_iDelta = 0;
 	}
 	float interpolate = ( 5 - m_fFade ) / 5;
+
+	// Smoothly interpolate the displayed money count toward the authoritative value.
+	// We snap to the target when no transition is active so first-frame draws are stable.
+	if( m_fMoneyTransitionTime > 0 )
+	{
+		m_fMoneyTransitionTime -= gHUD.m_flTimeDelta;
+		if( m_fMoneyTransitionTime <= 0 )
+		{
+			m_fMoneyTransitionTime = 0;
+			m_iMoneyCountDisp = m_iMoneyCount;
+		}
+		else
+		{
+			int delta = m_iMoneyCount - m_iMoneyCountDisp;
+			int step = (int)(delta * (gHUD.m_flTimeDelta / 0.35f));
+			if( step == 0 )
+				step = (delta > 0) ? 1 : -1;
+			m_iMoneyCountDisp += step;
+		}
+	}
 
 	int iDollarWidth = m_hDollar.rect.Width();
 
@@ -142,7 +165,7 @@ int CHudMoney::Draw(float flTime)
 	SPR_Set(m_hDollar.spr, r, g, b);
 	SPR_DrawAdditive(0, x, y, &m_hDollar.rect);
 
-	DrawUtils::DrawHudNumber2( x + iDollarWidth, y, false, 5, m_iMoneyCount, r, g, b );
+	DrawUtils::DrawHudNumber2( x + iDollarWidth, y, false, 5, m_iMoneyCountDisp, r, g, b );
 	FillRGBA(x + iDollarWidth / 4, y + gHUD.m_iFontHeight / 4, 2, 2, r, g, b, alphaBalance );
 	return 1;
 }
@@ -155,6 +178,9 @@ int CHudMoney::MsgFunc_Money(const char *pszName, int iSize, void *pbuf)
 	gEngfuncs.Cvar_SetValue( gHUD.cscl_currentmoney->name, m_iMoneyCount );
 	m_iDelta = m_iMoneyCount - iOldCount;
 	m_fFade = 5.0f; //fade for 5 seconds
+	// kick off the smooth numeric transition for the money value
+	if( m_iDelta != 0 )
+		m_fMoneyTransitionTime = 0.35f;
 	m_iFlags |= HUD_DRAW;
 	return 1;
 }
