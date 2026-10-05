@@ -21,6 +21,8 @@
 //
 #pragma once
 
+#include "utlvector.h"
+
 #define RGB_YELLOWISH 0x00FFA000 //255,160,0
 #define RGB_REDISH 0x00FF1010 //255,16,16
 #define RGB_GREENISH 0x0000A000 //0,160,0
@@ -348,13 +350,30 @@ public:
 	bool m_bShow;
 	cvar_t *cl_hide_motd;
 
+	// Color spans for HTML-rendered MOTDs. Spans are stored flat (ascending by
+	// line, then by character) because CUtlVector cannot be nested. A span marks
+	// the character position where a color run starts, within its line. The
+	// default color is used for any character not covered by a span.
+	struct MOTDColorSpan
+	{
+		int lineIndex;	// line this span belongs to
+		int charIndex;	// index into that line's plain text
+		int r, g, b;	// color components
+	};
+
 protected:
 	static int MOTD_DISPLAY_TIME;
 	CUtlString m_szMOTD;
-	
+
 	int m_iLines;
 	int m_iMaxLength;
 	bool ignoreThisMotd;
+	CUtlVector<MOTDColorSpan> m_ColorSpans;	// flat, ascending by line then char
+	int m_iDefaultR, m_iDefaultG, m_iDefaultB;
+
+	// Convert an HTML MOTD into plain text, recording per-line color spans
+	// into m_ColorSpans.
+	void StripHtmlMOTD( const char *src, CUtlString &out );
 };
 
 
