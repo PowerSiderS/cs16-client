@@ -20,6 +20,9 @@ android {
 			ndk {
 				abiFilters project.property("targetAbi").split(",")
 			}
+	
+		ndk {
+        	abiFilters "armeabi-v7a", "arm64-v8a", "x86"
 		}
 	}
 
