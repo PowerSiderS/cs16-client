@@ -33,6 +33,7 @@
 
 #if XASH_WIN32 == 1 || XASH_PSVITA == 1
 #define strcasestr strstr
+#define strncasecmp _strnicmp
 #endif
 
 // Forward declarations for the HTML/text helpers defined later in this file.
