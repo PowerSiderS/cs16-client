@@ -116,3 +116,7 @@ static def getBuildNum() {
 	int minuteOfDay = now.getHour() * 60 + now.getMinute()
 	return qBuildNum * 10000 + minuteOfDay
 }
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+	dependsOn(tasks.matching { it.name.startsWith("configureCMake") })
+}
