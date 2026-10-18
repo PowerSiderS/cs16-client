@@ -7,8 +7,20 @@ concurrency:
 
 jobs:
   android:
-    name: Android
+    name: Android ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - abi: armeabi-v7a
+            arch: armv7
+          - abi: arm64-v8a
+            arch: arm64
+          - abi: x86
+            arch: x86
+          - abi: x86_64
+            arch: x86_64
+      fail-fast: false
     steps:
       - name: Checkout sources
         uses: actions/checkout@v5
@@ -30,12 +42,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: Android-ccache-${{ github.sha }}
+          key: Android-${{ matrix.arch }}-ccache-${{ github.sha }}
           restore-keys: |
-            Android-ccache-${{ github.ref_name }}
+            Android-${{ matrix.arch }}-ccache-${{ github.ref_name }}
+            Android-${{ matrix.arch }}-ccache-
             Android-ccache-
       - name: Build and Sign APK
         env:
+          VERSION_NAME: V1
           KEYSTORE_FILE_PATH: ${{ github.workspace }}/signingkey.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ALIAS }}
@@ -43,18 +57,18 @@ jobs:
         run: |
           if [[ -n "${{ secrets.SIGNING_KEY }}" ]]; then
             echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > ${{ env.KEYSTORE_FILE_PATH }}
-            ./gradlew assembleGitContinuous
-            mv app/build/outputs/apk/git/continuous/app-git-continuous.apk CS16Client-Android.apk
+            ./gradlew assembleGitContinuous -PtargetAbi=${{ matrix.abi }}
+            mv app/build/outputs/apk/git/continuous/app-git-continuous.apk FreakyClient-${{ matrix.arch }}.apk
           else
-            ./gradlew assembleGitDebug
-            mv app/build/outputs/apk/git/debug/app-git-debug.apk CS16Client-Android.apk
+            ./gradlew assembleGitDebug -PtargetAbi=${{ matrix.abi }}
+            mv app/build/outputs/apk/git/debug/app-git-debug.apk FreakyClient-${{ matrix.arch }}.apk
           fi
         working-directory: android
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Android
-          path: android/CS16Client-Android.apk
+          name: Android-${{ matrix.arch }}
+          path: android/FreakyClient-${{ matrix.arch }}.apk
   psvita:
     name: PS Vita
     runs-on: ubuntu-latest
@@ -257,8 +271,8 @@ jobs:
       - name: Upload new release
         run: |
           TAG_NAME=${{ github.ref_name == 'main' && 'continuous' || format('continuous-{0}', github.ref_name) }}
-          gh release create "$TAG_NAME" --title "CS16Client development build" \
+          gh release create "$TAG_NAME" --title "FreakyClient development build" \
             --prerelease --generate-notes \
-            CS16Client-* --repo ${{ github.repository }}
+            FreakyClient-* --repo ${{ github.repository }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

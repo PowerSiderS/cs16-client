@@ -11,10 +11,16 @@ android {
 
 	defaultConfig {
 		applicationId = "su.xash.cs16client"
-		versionName = "1.35-" + getGitHash()
+		versionName = System.getenv('VERSION_NAME') ?: "V1"
 		versionCode = getBuildNum()
 		minSdk = 21
 		targetSdk = 36
+
+		if (project.hasProperty("targetAbi")) {
+			ndk {
+				abiFilters project.property("targetAbi").split(",")
+			}
+		}
 	}
 
 	compileOptions {
@@ -107,15 +113,4 @@ static def getBuildNum() {
 	int qBuildNum = releaseDate.until(now, ChronoUnit.DAYS)
 	int minuteOfDay = now.getHour() * 60 + now.getMinute()
 	return qBuildNum * 10000 + minuteOfDay
-}
-
-def getGitHash() {
-	Process process = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
-			.directory(project.rootDir)
-			.redirectErrorStream(true)
-			.start()
-	InputStreamReader inputStreamReader = new InputStreamReader(process.getInputStream())
-	BufferedReader bufferedReader = new BufferedReader(inputStreamReader)
-
-	return bufferedReader.getText().trim()
 }
