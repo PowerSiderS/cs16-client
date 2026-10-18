@@ -7,18 +7,8 @@ concurrency:
 
 jobs:
   android:
-    name: Android ${{ matrix.arch }}
+    name: Android
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - abi: armeabi-v7a
-            arch: armv7
-          - abi: arm64-v8a
-            arch: arm64
-          - abi: x86
-            arch: x86
-      fail-fast: false
     steps:
       - name: Checkout sources
         uses: actions/checkout@v5
@@ -40,10 +30,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ccache
-          key: Android-${{ matrix.arch }}-ccache-${{ github.sha }}
+          key: Android-ccache-${{ github.sha }}
           restore-keys: |
-            Android-${{ matrix.arch }}-ccache-${{ github.ref_name }}
-            Android-${{ matrix.arch }}-ccache-
+            Android-ccache-${{ github.ref_name }}
             Android-ccache-
       - name: Build and Sign APK
         env:
@@ -55,18 +44,18 @@ jobs:
         run: |
           if [[ -n "${{ secrets.SIGNING_KEY }}" ]]; then
             echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > ${{ env.KEYSTORE_FILE_PATH }}
-            ./gradlew assembleGitContinuous -PtargetAbi=${{ matrix.abi }}
-            mv app/build/outputs/apk/git/continuous/app-git-continuous.apk FreakyClient-${{ matrix.arch }}.apk
+            ./gradlew assembleGitContinuous
+            mv app/build/outputs/apk/git/continuous/app-git-continuous.apk FreakyClient-Android.apk
           else
-            ./gradlew assembleGitDebug -PtargetAbi=${{ matrix.abi }}
-            mv app/build/outputs/apk/git/debug/app-git-debug.apk FreakyClient-${{ matrix.arch }}.apk
+            ./gradlew assembleGitDebug
+            mv app/build/outputs/apk/git/debug/app-git-debug.apk FreakyClient-Android.apk
           fi
         working-directory: android
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Android-${{ matrix.arch }}
-          path: android/FreakyClient-*.apk
+          name: Android
+          path: android/FreakyClient-Android.apk
   windows:
     name: Windows
     runs-on: windows-latest

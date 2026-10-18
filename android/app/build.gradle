@@ -16,12 +16,8 @@ android {
 		minSdk = 21
 		targetSdk = 36
 
-		String[] abiList = project.hasProperty("targetAbi")
-				? project.property("targetAbi").split(",")
-				: ["armeabi-v7a", "arm64-v8a", "x86"] as String[]
-
 		ndk {
-			abiFilters abiList
+			abiFilters "armeabi-v7a", "arm64-v8a", "x86"
 		}
 	}
 
