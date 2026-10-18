@@ -110,6 +110,14 @@ int DLLEXPORT Initialize( cl_enginefunc_t *pEnginefuncs, int iVersion )
 
 	sscanf( CVAR_GET_STRING( "host_ver" ), "%d", &g_iXash );
 
+	// Report the engine version only, so the player sees
+	// it in the console rather than in a log nobody opens.
+	if( g_iXash < MIN_XASH_VERSION )
+	{
+		gEngfuncs.Con_Printf("Xash3D FWGS build %d is older than %d; running anyway.\n",
+			g_iXash, MIN_XASH_VERSION);
+	}
+	
 	Game_HookEvents();
 	CL_LoadParticleMan();
 
@@ -424,11 +432,12 @@ int DLLEXPORT HUD_GetRenderInterface( int version, render_api_t *renderfuncs, re
 	// we didn't send callbacks to engine, because we don't use it
 	// *callback = renderInterface;
 
-	// we have here a Host_Error, so check Xash for version
+	/* Who are him, we don't know him
 	if( g_iXash < MIN_XASH_VERSION )
 	{
 		gRenderAPI.Host_Error("Xash3D FWGS version check failed!\nPlease update your Xash3D FWGS!\n");
 	}
+	*/
 
 	return true;
 }
@@ -445,7 +454,9 @@ int DLLEXPORT HUD_MobilityInterface( mobile_engfuncs_t *mobileapi )
 		gEngfuncs.Con_Printf("Client Error: Mobile API version mismatch. Got: %i, want: %i\n",
 			mobileapi->version, MOBILITY_API_VERSION);
 
+		/* no more error
 		gRenderAPI.Host_Error("Xash3D Android version check failed!\nPlease update your Xash3D Android!\n");
+		*/
 		return 1;
 	}
 
