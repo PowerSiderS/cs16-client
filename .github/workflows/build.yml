@@ -18,8 +18,6 @@ jobs:
             arch: arm64
           - abi: x86
             arch: x86
-          - abi: x86_64
-            arch: x86_64
       fail-fast: false
     steps:
       - name: Checkout sources
