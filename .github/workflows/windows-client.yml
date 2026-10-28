@@ -1,0 +1,74 @@
+name: Windows Client
+
+# Builds only the cs16-client client library (cl_dll) for Windows.
+# The repository is checked out shallowly (fetch-depth: 1), so no commit
+# history is fetched and nothing in the build tries to count commits.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-client-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Client (${{ matrix.arch }})
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [ 'x86' ]
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
+
+    steps:
+      # Last commit only: no full history and no `git rev-list --count`.
+      - name: Checkout last commit only
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Setup Visual Studio
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Setup YY-Thunks
+        if: matrix.arch == 'x86'
+        run: bash scripts/setup_yy_thunks.sh
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Restore sccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SCCACHE_DIR }}
+          key: sccache-${{ runner.os }}-${{ matrix.arch }}-${{ github.sha }}
+          restore-keys: |
+            sccache-${{ runner.os }}-${{ matrix.arch }}-
+
+      # Server and mainui are disabled, so only the client target is configured.
+      - name: Configure
+        run: >
+          cmake --preset "win32-ci-${{ matrix.arch }}"
+          -DCMAKE_POLICY_DEFAULT_CMP0141=NEW
+          -DBUILD_CLIENT=ON
+          -DBUILD_SERVER=OFF
+          -DBUILD_MAINUI=OFF
+
+      - name: Build client
+        run: cmake --build build --target client --parallel
+
+      - name: Upload client
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-${{ matrix.arch }}
+          path: |
+            build/cl_dll/client*.dll
+            build/cl_dll/client*.pdb
+          if-no-files-found: error
