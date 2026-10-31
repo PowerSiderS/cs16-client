@@ -28,6 +28,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
 #include <memory.h>
 #include <math.h>
 
@@ -47,16 +48,36 @@ extern engine_studio_api_t IEngineStudio;
 typedef struct pmtrace_s pmtrace_t;
 
 static vec3_t s_playerHeadPositions[MAX_CLIENTS + 1];
+static vec3_t s_playerHeadOrigins[MAX_CLIENTS + 1];
 static bool s_playerHeadPositionValid[MAX_CLIENTS + 1];
 static const int STUDIO_HITGROUP_HEAD = 1;
 
-bool Studio_GetPlayerHeadPosition( int playerIndex, float *position )
+bool Studio_GetPlayerHeadPosition( int playerIndex, const float *entityOrigin, float *position )
 {
-	if ( playerIndex < 1 || playerIndex > MAX_CLIENTS || !position || !s_playerHeadPositionValid[playerIndex] )
+	if ( playerIndex < 1 || playerIndex > MAX_CLIENTS || !entityOrigin || !position || !s_playerHeadPositionValid[playerIndex] )
 		return false;
 
 	VectorCopy( s_playerHeadPositions[playerIndex], position );
+	vec3_t originDelta;
+	VectorSubtract( entityOrigin, s_playerHeadOrigins[playerIndex], originDelta );
+	VectorAdd( position, originDelta, position );
 	return true;
+}
+
+static bool Studio_IsHeadBone( const char *name )
+{
+	if ( !name )
+		return false;
+
+	for ( int i = 0; i <= 28; ++i )
+	{
+		if ( !name[i] )
+			break;
+		if ( tolower( (unsigned char)name[i] ) == 'h' && tolower( (unsigned char)name[i + 1] ) == 'e' &&
+			 tolower( (unsigned char)name[i + 2] ) == 'a' && tolower( (unsigned char)name[i + 3] ) == 'd' )
+			return true;
+	}
+	return false;
 }
 
 void Studio_CachePlayerHeadPosition( CStudioModelRenderer *renderer )
@@ -69,24 +90,44 @@ void Studio_CachePlayerHeadPosition( CStudioModelRenderer *renderer )
 		return;
 
 	s_playerHeadPositionValid[playerIndex] = false;
-	if ( renderer->m_pStudioHeader->numhitboxes <= 0 )
-		return;
-
-	mstudiobbox_t *hitboxes = (mstudiobbox_t *)((byte *)renderer->m_pStudioHeader + renderer->m_pStudioHeader->hitboxindex);
-	for ( int i = 0; i < renderer->m_pStudioHeader->numhitboxes; ++i )
+	if ( renderer->m_pStudioHeader->numhitboxes > 0 )
 	{
-		const mstudiobbox_t &hitbox = hitboxes[i];
-		if ( hitbox.group != STUDIO_HITGROUP_HEAD || hitbox.bone < 0 || hitbox.bone >= renderer->m_pStudioHeader->numbones )
-			continue;
+		mstudiobbox_t *hitboxes = (mstudiobbox_t *)((byte *)renderer->m_pStudioHeader + renderer->m_pStudioHeader->hitboxindex);
+		for ( int i = 0; i < renderer->m_pStudioHeader->numhitboxes; ++i )
+		{
+			const mstudiobbox_t &hitbox = hitboxes[i];
+			if ( hitbox.group != STUDIO_HITGROUP_HEAD || hitbox.bone < 0 ||
+				hitbox.bone >= renderer->m_pStudioHeader->numbones || hitbox.bone >= MAXSTUDIOBONES )
+				continue;
 
-		vec3_t center;
-		for ( int axis = 0; axis < 3; ++axis )
-			center[axis] = ( hitbox.bbmin[axis] + hitbox.bbmax[axis] ) * 0.5f;
+			vec3_t center;
+			for ( int axis = 0; axis < 3; ++axis )
+				center[axis] = ( hitbox.bbmin[axis] + hitbox.bbmax[axis] ) * 0.5f;
 
-		VectorTransform( center, (*renderer->m_pbonetransform)[hitbox.bone], s_playerHeadPositions[playerIndex] );
-		s_playerHeadPositionValid[playerIndex] = true;
-		return;
+			VectorTransform( center, (*renderer->m_pbonetransform)[hitbox.bone], s_playerHeadPositions[playerIndex] );
+			s_playerHeadPositionValid[playerIndex] = true;
+			break;
+		}
 	}
+
+	// Some custom player models have a head bone but omit hitbox metadata.
+	if ( !s_playerHeadPositionValid[playerIndex] )
+	{
+		mstudiobone_t *bones = (mstudiobone_t *)((byte *)renderer->m_pStudioHeader + renderer->m_pStudioHeader->boneindex);
+		for ( int i = 0; i < renderer->m_pStudioHeader->numbones && i < MAXSTUDIOBONES; ++i )
+		{
+			if ( !Studio_IsHeadBone( bones[i].name ) )
+				continue;
+
+			for ( int axis = 0; axis < 3; ++axis )
+				s_playerHeadPositions[playerIndex][axis] = (*renderer->m_pbonetransform)[i][axis][3];
+			s_playerHeadPositionValid[playerIndex] = true;
+			break;
+		}
+	}
+
+	if ( s_playerHeadPositionValid[playerIndex] )
+		VectorCopy( renderer->m_pCurrentEntity->origin, s_playerHeadOrigins[playerIndex] );
 }
 
 static void StudioApplyESPTeamTint( alight_t &lighting )

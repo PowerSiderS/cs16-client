@@ -71,21 +71,11 @@ bool   v_resetCamera = 1;
 
 static cvar_t *aim_head_fov;
 static int s_iAimTarget = 0;
-static int s_iAimWeapon = 0;
-static bool s_bAimAttackHeld = false;
-static bool s_bAimScopeHeld = false;
 static bool s_bAimManualOverride = false;
 static bool s_bAimHasAppliedAngles = false;
 static vec3_t s_vecAimAppliedAngles;
-static float s_flAimScopeStart = 0.0f;
 
-extern bool Studio_GetPlayerHeadPosition( int playerIndex, float *position );
-
-static bool V_IsSniperWeapon( int weapon )
-{
-	return weapon == WEAPON_SCOUT || weapon == WEAPON_AWP ||
-		weapon == WEAPON_G3SG1 || weapon == WEAPON_SG550;
-}
+extern bool Studio_GetPlayerHeadPosition( int playerIndex, const float *entityOrigin, float *position );
 
 static float V_GetAimAngle( const ref_params_t *pparams, const float *point, float *angles )
 {
@@ -109,7 +99,7 @@ static float V_GetAimAngle( const ref_params_t *pparams, const float *point, flo
 
 static void V_GetAimHeadPosition( cl_entity_t *ent, float *position )
 {
-	if ( Studio_GetPlayerHeadPosition( ent->index, position ) )
+	if ( Studio_GetPlayerHeadPosition( ent->index, ent->origin, position ) )
 	{
 		// Ignore a cached pose if this entity has moved far since it was rendered.
 		vec3_t offset;
@@ -121,6 +111,26 @@ static void V_GetAimHeadPosition( cl_entity_t *ent, float *position )
 	// Fallback for models without a head hitbox (group 1).
 	VectorCopy( ent->origin, position );
 	position[2] += ent->curstate.usehull ? 30.0f : 64.0f;
+}
+
+static bool V_IsAimTargetVisible( ref_params_t *pparams, const float *position )
+{
+	if ( !gEngfuncs.pEventAPI )
+		return false;
+
+	vec3_t start, end;
+	VectorCopy( pparams->vieworg, start );
+	VectorCopy( position, end );
+
+	pmtrace_t trace;
+	gEngfuncs.pEventAPI->EV_SetUpPlayerPrediction( false, true );
+	gEngfuncs.pEventAPI->EV_PushPMStates();
+	gEngfuncs.pEventAPI->EV_SetSolidPlayers( -1 );
+	gEngfuncs.pEventAPI->EV_SetTraceHull( 0 );
+	gEngfuncs.pEventAPI->EV_PlayerTrace( start, end, PM_STUDIO_BOX | PM_STUDIO_IGNORE, -1, &trace );
+	gEngfuncs.pEventAPI->EV_PopPMStates();
+
+	return !trace.startsolid && trace.fraction >= 1.0f;
 }
 
 static float V_AimAngleDelta( float from, float to )
@@ -154,6 +164,9 @@ static cl_entity_t *V_FindAimTarget( ref_params_t *pparams, float fov, float *ai
 		// the head can select a target outside the requested head FOV.
 		vec3_t head, headAngles;
 		V_GetAimHeadPosition( ent, head );
+		if ( !V_IsAimTargetVisible( pparams, head ) )
+			continue;
+
 		float angle = V_GetAimAngle( pparams, head, headAngles );
 		if ( angle < bestAngle )
 		{
@@ -170,28 +183,28 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	cl_entity_t *target = NULL;
 	vec3_t aimAngles;
 	float fov = aim_head_fov ? aim_head_fov->value : 0.0f;
-	int weapon = HUD_GetWeapon();
-	bool sniper = V_IsSniperWeapon( weapon );
+	fov = fminf( fmaxf( fov, 0.0f ), 180.0f );
 	bool manualInput = false;
 
 	if ( s_iAimTarget > 0 && s_bAimHasAppliedAngles )
 	{
-		manualInput = fabsf( V_AimAngleDelta( s_vecAimAppliedAngles[PITCH], pparams->cl_viewangles[PITCH] ) ) > 1.5f ||
-			fabsf( V_AimAngleDelta( s_vecAimAppliedAngles[YAW], pparams->cl_viewangles[YAW] ) ) > 1.5f;
+		manualInput = fabsf( V_AimAngleDelta( s_vecAimAppliedAngles[PITCH], pparams->cl_viewangles[PITCH] ) ) > 0.25f ||
+			fabsf( V_AimAngleDelta( s_vecAimAppliedAngles[YAW], pparams->cl_viewangles[YAW] ) ) > 0.25f;
 		if ( manualInput )
 			s_bAimManualOverride = true;
 	}
 
-	if ( fov > 0.0f && pparams->health > 0 && !gEngfuncs.IsSpectateOnly() &&
-		 !CL_IsThirdPerson() && pparams->viewentity <= pparams->maxclients )
+	const bool aimActive = fov > 0.0f && pparams->health > 0 && !gEngfuncs.IsSpectateOnly() &&
+		 !CL_IsThirdPerson() && pparams->viewentity <= pparams->maxclients;
+	if ( aimActive )
 	{
 		// After a manual mouse turn, wait until the crosshair leaves the acquire
 		// cone before allowing a new lock. This avoids instantly snapping back.
 		if ( s_bAimManualOverride && !V_FindAimTarget( pparams, fov, aimAngles ) )
 			s_bAimManualOverride = false;
 
-		// Keep the lock while close to the aimed head; acquire new targets only
-		// when the crosshair is inside the configured body-angle threshold.
+		// Keep the lock through small pose/recoil changes while requiring a clear
+		// line-of-sight trace to the model's head point.
 		if ( !s_bAimManualOverride && s_iAimTarget > 0 )
 		{
 			cl_entity_t *locked = s_iAimTarget <= gEngfuncs.GetMaxClients() ?
@@ -204,15 +217,18 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 			{
 				vec3_t head;
 				V_GetAimHeadPosition( locked, head );
-				// A small manual turn releases the lock, so the assist does not
-				// continually pull the user's view back to the target.
-				if ( V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) )
+				if ( V_IsAimTargetVisible( pparams, head ) &&
+					 V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) )
 					target = locked;
 			}
 		}
 
 		if ( !target && !s_bAimManualOverride )
 			target = V_FindAimTarget( pparams, fov, aimAngles );
+	}
+	else
+	{
+		s_bAimManualOverride = false;
 	}
 
 	if ( target )
@@ -225,40 +241,10 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 		VectorCopy( aimAngles, s_vecAimAppliedAngles );
 		s_bAimHasAppliedAngles = true;
 		gEngfuncs.SetViewAngles( aimAngles );
-
-		if ( !s_bAimAttackHeld || weapon != s_iAimWeapon )
-		{
-			if ( s_bAimAttackHeld )
-				gEngfuncs.pfnClientCmd( "-attack; -attack2\n" );
-			s_bAimAttackHeld = true;
-			s_iAimWeapon = weapon;
-			s_bAimScopeHeld = false;
-
-			if ( sniper && gHUD.m_iFOV >= 90 )
-			{
-				gEngfuncs.pfnClientCmd( "+attack2\n" );
-				s_bAimScopeHeld = true;
-				s_flAimScopeStart = pparams->time;
-			}
-			else
-			{
-				gEngfuncs.pfnClientCmd( "+attack\n" );
-			}
-		}
-		else if ( s_bAimScopeHeld && pparams->time - s_flAimScopeStart >= 0.15f )
-		{
-			gEngfuncs.pfnClientCmd( "-attack2; +attack\n" );
-			s_bAimScopeHeld = false;
-		}
 	}
 	else
 	{
 		s_iAimTarget = 0;
-		if ( s_bAimAttackHeld )
-			gEngfuncs.pfnClientCmd( "-attack; -attack2\n" );
-		s_bAimAttackHeld = false;
-		s_bAimScopeHeld = false;
-		s_iAimWeapon = 0;
 		s_bAimHasAppliedAngles = false;
 	}
 }
@@ -2126,7 +2112,8 @@ V_Init
 */
 void V_Init (void)
 {
-	aim_head_fov = gEngfuncs.pfnRegisterVariable( "aim_head_fov", "5", FCVAR_ARCHIVE );
+	// GoldSrc cvars are floats; retain fractional degree values such as 2.5.
+	aim_head_fov = gEngfuncs.pfnRegisterVariable( "aim_head_fov", "5.0", FCVAR_ARCHIVE );
 
 	//gEngfuncs.pfnAddCommand ("centerview", V_StartPitchDrift );
 
