@@ -5,7 +5,7 @@
 #include "cl_util.h"
 #include "triangleapi.h"
 #include <math.h>
-#include "view.h"
+#include "com_weapons.h"
 
 cvar_t *esp_enable_cvar;
 cvar_t *esp_name_cvar;
