@@ -40,6 +40,8 @@
 #include "camera.h"
 #include "eventscripts.h"
 
+extern bool ESP_GetPlayerHighlightColor( int playerIndex, int &r, int &g, int &b );
+
 #define ANIM_WALK_SEQUENCE 3
 #define ANIM_JUMP_SEQUENCE 6
 #define ANIM_SWIM_1 8
@@ -1151,9 +1153,33 @@ int R_StudioDrawPlayer(int flags, entity_state_t *pplayer)
 
 			return ret;
 	}
-	else
 #endif
-	return g_StudioRenderer.StudioDrawPlayer(flags, pplayer);
+	cl_entity_t *pCurrentEntity = IEngineStudio.GetCurrentEntity();
+	int r, g, b;
+	bool highlighted = pCurrentEntity && ESP_GetPlayerHighlightColor( pCurrentEntity->index, r, g, b );
+	int oldRenderFx = 0;
+	int oldRenderAmt = 0;
+	color24 oldRenderColor = {};
+	if ( highlighted )
+	{
+		oldRenderFx = pCurrentEntity->curstate.renderfx;
+		oldRenderAmt = pCurrentEntity->curstate.renderamt;
+		oldRenderColor = pCurrentEntity->curstate.rendercolor;
+		pCurrentEntity->curstate.renderfx = kRenderFxGlowShell;
+		pCurrentEntity->curstate.rendercolor.r = (byte)r;
+		pCurrentEntity->curstate.rendercolor.g = (byte)g;
+		pCurrentEntity->curstate.rendercolor.b = (byte)b;
+		pCurrentEntity->curstate.renderamt = 255;
+	}
+
+	int result = g_StudioRenderer.StudioDrawPlayer(flags, pplayer);
+	if ( highlighted )
+	{
+		pCurrentEntity->curstate.renderfx = oldRenderFx;
+		pCurrentEntity->curstate.renderamt = oldRenderAmt;
+		pCurrentEntity->curstate.rendercolor = oldRenderColor;
+	}
+	return result;
 }
 
 int R_StudioDrawModel(int flags)

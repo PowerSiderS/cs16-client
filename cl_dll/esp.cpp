@@ -4,6 +4,7 @@
 #include "hud.h"
 #include "cl_util.h"
 #include "triangleapi.h"
+#include "com_weapons.h"
 #include <math.h>
 #include "com_weapons.h"
 
@@ -11,6 +12,33 @@ cvar_t *esp_enable_cvar;
 cvar_t *esp_name_cvar;
 cvar_t *esp_dist_cvar;
 cvar_t *esp_mates_cvar;
+
+bool ESP_GetPlayerHighlightColor( int playerIndex, int &r, int &g, int &b )
+{
+	if ( !esp_enable_cvar || !esp_enable_cvar->value ||
+		 playerIndex < 1 || playerIndex > gEngfuncs.GetMaxClients() )
+		return false;
+
+	cl_entity_t *local = gEngfuncs.GetLocalPlayer();
+	if ( !local || local->index == playerIndex || g_PlayerExtraInfo[playerIndex].dead ||
+		 !g_PlayerInfoList[playerIndex].name || !g_PlayerInfoList[playerIndex].name[0] )
+		return false;
+
+	const int team = g_PlayerExtraInfo[playerIndex].teamnumber;
+	const int myTeam = g_iTeamNumber;
+	if ( team == myTeam )
+	{
+		if ( esp_mates_cvar && !esp_mates_cvar->value )
+			return false;
+		r = 60; g = 120; b = 255;
+	}
+	else
+	{
+		r = 255; g = 40; b = 40;
+	}
+
+	return true;
+}
 
 #define ESP_BOX_THICKNESS 2
 

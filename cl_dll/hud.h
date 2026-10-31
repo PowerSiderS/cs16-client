@@ -953,6 +953,8 @@ public:
 	int Draw( float flTime );
 };
 
+bool ESP_GetPlayerHighlightColor( int playerIndex, int &r, int &g, int &b );
+
 //
 //-----------------------------------------------------
 //
