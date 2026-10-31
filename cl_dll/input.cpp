@@ -26,9 +26,13 @@
 
 #include "vgui_parser.h"
 #include "com_weapons.h"
+#include "cl_entity.h"
 
 extern int g_weaponselect;
 extern cl_enginefunc_t gEngfuncs;
+
+// [BHOPTAP/GS] predicted player flags, updated in HUD_WeaponsPostThink (cs_wpn/cs_weapons.cpp)
+extern int g_iPlayerFlags;
 
 // Defined in pm_math.c
 float anglemod( float a );
@@ -70,13 +74,13 @@ cvar_t	*cl_vsmoothing;
 KEY BUTTONS
 
 Continuous button event tracking is complicated by the fact that two different
-input sources (say, mouse button 1 and the control key) can both press the
-same button, but the button should only be released when both of the
+input sources (say, mouse button 1 and the control key) can both press
+the same button, but the button should only be released when both of the
 pressing key have been released.
 
 When a key event issues a button command (+forward, +attack, etc), it appends
-its key number as a parameter to the command so it can be matched up with
-the release.
+its key number as a parameter to the command so it can be matched up with the
+release.
 
 state bit 0 is the current state of the key
 state bit 1 is edge triggered on the up to down transition
@@ -111,6 +115,10 @@ kbutton_t	in_alt1;
 kbutton_t	in_score;
 kbutton_t	in_break;
 kbutton_t	in_graph;  // Display the netgraph
+
+// [BHOPTAP/GS] feature buttons
+kbutton_t	in_bhoptap;
+kbutton_t	in_gs;
 
 struct kblist_t
 {
@@ -481,7 +489,6 @@ void IN_Alt1Down(void) {KeyDown(&in_alt1);}
 void IN_Alt1Up(void) {KeyUp(&in_alt1);}
 void IN_GraphDown(void) {KeyDown(&in_graph);}
 void IN_GraphUp(void) {KeyUp(&in_graph);}
-
 void IN_AttackDown(void)
 {
 	KeyDown( &in_attack );
@@ -493,6 +500,12 @@ void IN_AttackUp(void)
 	KeyUp( &in_attack );
 	in_cancel = 0;
 }
+
+// [BHOPTAP/GS] feature handlers
+void IN_BhopTapDown(void) { KeyDown(&in_bhoptap); }
+void IN_BhopTapUp(void) { KeyUp(&in_bhoptap); }
+void IN_GSDown(void) { KeyDown(&in_gs); }
+void IN_GSUp(void) { KeyUp(&in_gs); }
 
 // Special handling
 void IN_Cancel(void)
@@ -732,6 +745,51 @@ void DLLEXPORT CL_CreateMove ( float frametime, struct usercmd_s *cmd, int activ
 	//
 	cmd->buttons = CL_ButtonBits( 1 );
 
+	// [BHOPTAP/GS]
+	// +bhoptap: while held, jump is fired on every ground frame (auto bhop).
+	// +gs: while held and on ground, duck is alternated every frame (duck-spam
+	// ground strafe); released in air so air-strafing stays intact.
+	{
+		int iOnGround = 0;
+
+		// primary ground state: client prediction flags
+		if ( g_iPlayerFlags & FL_ONGROUND )
+			iOnGround = 1;
+
+		// fallback: local player entity state (onground is -1 while airborne)
+		if ( !iOnGround )
+		{
+			cl_entity_t *ent = gEngfuncs.GetLocalPlayer();
+			if ( ent && ent->curstate.onground != -1 )
+				iOnGround = 1;
+		}
+
+		// +bhoptap: press IN_JUMP exactly on ground frames
+		if ( in_bhoptap.state & 3 )
+		{
+			if ( iOnGround )
+				cmd->buttons |= IN_JUMP;
+		}
+
+		// +gs: alternate IN_DUCK on ground frames
+		if ( in_gs.state & 3 )
+		{
+			static int s_iGSToggle = 0;
+
+			if ( iOnGround )
+			{
+				s_iGSToggle ^= 1;
+				if ( s_iGSToggle )
+					cmd->buttons |= IN_DUCK;
+			}
+			else
+			{
+				s_iGSToggle = 0;
+			}
+		}
+	}
+	// [END BHOPTAP/GS]
+
 	// If they're in a modal dialog, ignore the attack button.
 	if ( GetClientVoice()->IsInSquelchMode() )
 		cmd->buttons &= ~IN_ATTACK;
@@ -965,6 +1023,12 @@ void InitInput (void)
 	gEngfuncs.pfnAddCommand ("-graph", IN_GraphUp);
 	gEngfuncs.pfnAddCommand ("+break",IN_BreakDown);
 	gEngfuncs.pfnAddCommand ("-break",IN_BreakUp);
+
+	// [BHOPTAP/GS] feature command registration
+	gEngfuncs.pfnAddCommand ("+bhoptap", IN_BhopTapDown);
+	gEngfuncs.pfnAddCommand ("-bhoptap", IN_BhopTapUp);
+	gEngfuncs.pfnAddCommand ("+gs", IN_GSDown);
+	gEngfuncs.pfnAddCommand ("-gs", IN_GSUp);
 
 	lookstrafe			= gEngfuncs.pfnRegisterVariable ( "lookstrafe", "0", FCVAR_ARCHIVE );
 	lookspring			= gEngfuncs.pfnRegisterVariable ( "lookspring", "0", FCVAR_ARCHIVE );
