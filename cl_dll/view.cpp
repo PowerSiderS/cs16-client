@@ -8,6 +8,7 @@
 // view/refresh setup functions
 
 #include <string.h>
+#include <math.h>
 
 #include "hud.h"
 #include "pm_math.h"
@@ -68,6 +69,157 @@ float  v_cameraRelaxAngle	= 5.0f;
 float  v_cameraFocusAngle	= 35.0f;
 int	   v_cameraMode = CAM_MODE_FOCUS;
 bool   v_resetCamera = 1;
+
+static cvar_t *aim_head_fov;
+static int s_iAimTarget = 0;
+static int s_iAimWeapon = 0;
+static bool s_bAimAttackHeld = false;
+static bool s_bAimScopeHeld = false;
+static float s_flAimScopeStart = 0.0f;
+
+static bool V_IsSniperWeapon( int weapon )
+{
+	return weapon == WEAPON_SCOUT || weapon == WEAPON_AWP ||
+		weapon == WEAPON_G3SG1 || weapon == WEAPON_SG550;
+}
+
+static float V_GetAimAngle( const ref_params_t *pparams, const float *point, float *angles )
+{
+	vec3_t direction, forward;
+	VectorSubtract( point, pparams->vieworg, direction );
+	if ( VectorNormalize( direction ) <= 0.0f )
+		return 180.0f;
+
+	AngleVectors( pparams->viewangles, forward, NULL, NULL );
+	float dot = DotProduct( forward, direction );
+	if ( dot > 1.0f ) dot = 1.0f;
+	if ( dot < -1.0f ) dot = -1.0f;
+
+	VectorAngles( direction, angles );
+	angles[PITCH] = -angles[PITCH];
+	angles[ROLL] = 0.0f;
+	return acosf( dot ) * ( 180.0f / (float)M_PI );
+}
+
+static cl_entity_t *V_FindAimTarget( ref_params_t *pparams, float fov, float *aimAngles )
+{
+	cl_entity_t *local = gEngfuncs.GetLocalPlayer();
+	if ( !local || ( g_iTeamNumber != TEAM_TERRORIST && g_iTeamNumber != TEAM_CT ) )
+		return NULL;
+
+	cl_entity_t *best = NULL;
+	float bestAngle = fov;
+	vec3_t body;
+	for ( int i = 1; i <= gEngfuncs.GetMaxClients(); ++i )
+	{
+		if ( i == local->index || !g_PlayerInfoList[i].name || !g_PlayerInfoList[i].name[0] ||
+			 g_PlayerExtraInfo[i].dead || g_PlayerExtraInfo[i].teamnumber == g_iTeamNumber ||
+			 ( g_PlayerExtraInfo[i].teamnumber != TEAM_TERRORIST && g_PlayerExtraInfo[i].teamnumber != TEAM_CT ) )
+			continue;
+
+		cl_entity_t *ent = gEngfuncs.GetEntityByIndex( i );
+		if ( !ent || !ent->player || ent->curstate.solid == SOLID_NOT )
+			continue;
+
+		VectorCopy( ent->origin, body );
+		body[2] += ent->curstate.usehull ? 18.0f : 36.0f;
+		vec3_t bodyAngles;
+		float angle = V_GetAimAngle( pparams, body, bodyAngles );
+		if ( angle < bestAngle )
+		{
+			best = ent;
+			bestAngle = angle;
+		}
+	}
+
+	if ( best )
+	{
+		vec3_t head;
+		VectorCopy( best->origin, head );
+		head[2] += best->curstate.usehull ? 30.0f : 64.0f;
+		V_GetAimAngle( pparams, head, aimAngles );
+	}
+	return best;
+}
+
+static void V_UpdateAimAssist( ref_params_t *pparams )
+{
+	cl_entity_t *target = NULL;
+	vec3_t aimAngles;
+	float fov = aim_head_fov ? aim_head_fov->value : 0.0f;
+	int weapon = HUD_GetWeapon();
+	bool sniper = V_IsSniperWeapon( weapon );
+
+	if ( fov > 0.0f && pparams->health > 0 && !gEngfuncs.IsSpectateOnly() &&
+		 !CL_IsThirdPerson() && pparams->viewentity <= pparams->maxclients )
+	{
+		// Keep the lock while close to the aimed head; acquire new targets only
+		// when the crosshair is inside the configured body-angle threshold.
+		if ( s_iAimTarget > 0 )
+		{
+			cl_entity_t *locked = gEngfuncs.GetEntityByIndex( s_iAimTarget );
+			if ( locked && locked->player && s_iAimTarget <= gEngfuncs.GetMaxClients() &&
+				 g_PlayerInfoList[s_iAimTarget].name && !g_PlayerExtraInfo[s_iAimTarget].dead &&
+				 ( g_PlayerExtraInfo[s_iAimTarget].teamnumber == TEAM_TERRORIST ||
+				   g_PlayerExtraInfo[s_iAimTarget].teamnumber == TEAM_CT ) &&
+				 g_PlayerExtraInfo[s_iAimTarget].teamnumber != g_iTeamNumber )
+			{
+				vec3_t head;
+				VectorCopy( locked->origin, head );
+				head[2] += locked->curstate.usehull ? 30.0f : 64.0f;
+				if ( V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) )
+					target = locked;
+			}
+		}
+
+		if ( !target )
+			target = V_FindAimTarget( pparams, fov, aimAngles );
+	}
+
+	if ( target )
+	{
+		s_iAimTarget = target->index;
+		VectorCopy( aimAngles, pparams->viewangles );
+		VectorCopy( aimAngles, pparams->cl_viewangles );
+		VectorCopy( aimAngles, v_angles );
+		VectorCopy( aimAngles, v_cl_angles );
+		gEngfuncs.SetViewAngles( aimAngles );
+
+		if ( !s_bAimAttackHeld || weapon != s_iAimWeapon )
+		{
+			if ( s_bAimAttackHeld )
+				gEngfuncs.pfnClientCmd( "-attack; -attack2\n" );
+			s_bAimAttackHeld = true;
+			s_iAimWeapon = weapon;
+			s_bAimScopeHeld = false;
+
+			if ( sniper && gHUD.m_iFOV >= 90 )
+			{
+				gEngfuncs.pfnClientCmd( "+attack2\n" );
+				s_bAimScopeHeld = true;
+				s_flAimScopeStart = pparams->time;
+			}
+			else
+			{
+				gEngfuncs.pfnClientCmd( "+attack\n" );
+			}
+		}
+		else if ( s_bAimScopeHeld && pparams->time - s_flAimScopeStart >= 0.15f )
+		{
+			gEngfuncs.pfnClientCmd( "-attack2; +attack\n" );
+			s_bAimScopeHeld = false;
+		}
+	}
+	else
+	{
+		s_iAimTarget = 0;
+		if ( s_bAimAttackHeld )
+			gEngfuncs.pfnClientCmd( "-attack; -attack2\n" );
+		s_bAimAttackHeld = false;
+		s_bAimScopeHeld = false;
+		s_iAimWeapon = 0;
+	}
+}
 
 cvar_t	*scr_ofsx;
 cvar_t	*scr_ofsy;
@@ -1078,6 +1230,8 @@ void V_CalcNormalRefdef ( struct ref_params_s *pparams )
 		}
 	}
 
+	V_UpdateAimAssist( pparams );
+
 	// View model bob. Styles 0 and 1 keep the stock sway, style 2 is the CSGO bob.
 	if ( gHUD.cl_viewbob && (int)gHUD.cl_viewbob->value == BOBSTYLE_MODERN )
 	{
@@ -1933,6 +2087,8 @@ V_Init
 */
 void V_Init (void)
 {
+	aim_head_fov = gEngfuncs.pfnRegisterVariable( "aim_head_fov", "5", FCVAR_ARCHIVE );
+
 	//gEngfuncs.pfnAddCommand ("centerview", V_StartPitchDrift );
 
 	scr_ofsx			= gEngfuncs.pfnRegisterVariable( "scr_ofsx","0", 0 );
