@@ -747,8 +747,7 @@ void DLLEXPORT CL_CreateMove ( float frametime, struct usercmd_s *cmd, int activ
 
 	// [BHOPTAP/GS]
 	// +bhoptap: while held, jump is fired on every ground frame (auto bhop).
-	// +gs: while held and on ground, duck is alternated every frame (duck-spam
-	// ground strafe); released in air so air-strafing stays intact.
+	// +gs: alternate duck on ground frames and release it in the air.
 	{
 		int iOnGround = 0;
 
@@ -765,22 +764,32 @@ void DLLEXPORT CL_CreateMove ( float frametime, struct usercmd_s *cmd, int activ
 		}
 
 		// +bhoptap: press IN_JUMP exactly on ground frames
-		if ( in_bhoptap.state & 3 )
+		if ( in_bhoptap.state & 1 )
 		{
+			// Treat this as a tap: release jump between ground contacts so the
+			// movement code can see a fresh press on the next landing.
+			cmd->buttons &= ~IN_JUMP;
 			if ( iOnGround )
 				cmd->buttons |= IN_JUMP;
 		}
 
 		// +gs: alternate IN_DUCK on ground frames
-		if ( in_gs.state & 3 )
 		{
 			static int s_iGSToggle = 0;
 
-			if ( iOnGround )
+			if ( in_gs.state & 1 )
 			{
-				s_iGSToggle ^= 1;
-				if ( s_iGSToggle )
-					cmd->buttons |= IN_DUCK;
+				cmd->buttons &= ~IN_DUCK;
+				if ( iOnGround )
+				{
+					s_iGSToggle ^= 1;
+					if ( s_iGSToggle )
+						cmd->buttons |= IN_DUCK;
+				}
+				else
+				{
+					s_iGSToggle = 0;
+				}
 			}
 			else
 			{
