@@ -40,6 +40,8 @@
 #include "camera.h"
 #include "eventscripts.h"
 
+extern void Studio_CachePlayerHeadPosition( CStudioModelRenderer *renderer );
+
 extern bool ESP_GetPlayerHighlightColor( int playerIndex, int &r, int &g, int &b );
 
 #if defined(_WIN32)
@@ -989,6 +991,7 @@ int CGameStudioModelRenderer::_StudioDrawPlayer(int flags, entity_state_t *pplay
 
 	StudioSetupBones();
 	StudioSaveBones();
+	Studio_CachePlayerHeadPosition( this );
 
 	m_pPlayerInfo->renderframe = m_nFrameCount;
 	m_pPlayerInfo = NULL;

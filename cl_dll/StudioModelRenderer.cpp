@@ -46,6 +46,49 @@ extern CGameStudioModelRenderer g_StudioRenderer;
 extern engine_studio_api_t IEngineStudio;
 typedef struct pmtrace_s pmtrace_t;
 
+static vec3_t s_playerHeadPositions[MAX_CLIENTS + 1];
+static bool s_playerHeadPositionValid[MAX_CLIENTS + 1];
+static const int STUDIO_HITGROUP_HEAD = 1;
+
+bool Studio_GetPlayerHeadPosition( int playerIndex, float *position )
+{
+	if ( playerIndex < 1 || playerIndex > MAX_CLIENTS || !position || !s_playerHeadPositionValid[playerIndex] )
+		return false;
+
+	VectorCopy( s_playerHeadPositions[playerIndex], position );
+	return true;
+}
+
+void Studio_CachePlayerHeadPosition( CStudioModelRenderer *renderer )
+{
+	if ( !renderer || !renderer->m_pCurrentEntity || !renderer->m_pStudioHeader || !renderer->m_pbonetransform )
+		return;
+
+	const int playerIndex = renderer->m_pCurrentEntity->index;
+	if ( playerIndex < 1 || playerIndex > MAX_CLIENTS )
+		return;
+
+	s_playerHeadPositionValid[playerIndex] = false;
+	if ( renderer->m_pStudioHeader->numhitboxes <= 0 )
+		return;
+
+	mstudiobbox_t *hitboxes = (mstudiobbox_t *)((byte *)renderer->m_pStudioHeader + renderer->m_pStudioHeader->hitboxindex);
+	for ( int i = 0; i < renderer->m_pStudioHeader->numhitboxes; ++i )
+	{
+		const mstudiobbox_t &hitbox = hitboxes[i];
+		if ( hitbox.group != STUDIO_HITGROUP_HEAD || hitbox.bone < 0 || hitbox.bone >= renderer->m_pStudioHeader->numbones )
+			continue;
+
+		vec3_t center;
+		for ( int axis = 0; axis < 3; ++axis )
+			center[axis] = ( hitbox.bbmin[axis] + hitbox.bbmax[axis] ) * 0.5f;
+
+		VectorTransform( center, (*renderer->m_pbonetransform)[hitbox.bone], s_playerHeadPositions[playerIndex] );
+		s_playerHeadPositionValid[playerIndex] = true;
+		return;
+	}
+}
+
 static void StudioApplyESPTeamTint( alight_t &lighting )
 {
 	cl_entity_t *ent = IEngineStudio.GetCurrentEntity();
@@ -1185,6 +1228,7 @@ int CStudioModelRenderer::StudioDrawPlayer(int flags, entity_state_t *pplayer)
 
 	StudioSetupBones();
 	StudioSaveBones();
+	Studio_CachePlayerHeadPosition( this );
 
 	m_pPlayerInfo->renderframe = m_nFrameCount;
 	m_pPlayerInfo = NULL;

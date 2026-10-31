@@ -74,7 +74,12 @@ static int s_iAimTarget = 0;
 static int s_iAimWeapon = 0;
 static bool s_bAimAttackHeld = false;
 static bool s_bAimScopeHeld = false;
+static bool s_bAimManualOverride = false;
+static bool s_bAimHasAppliedAngles = false;
+static vec3_t s_vecAimAppliedAngles;
 static float s_flAimScopeStart = 0.0f;
+
+extern bool Studio_GetPlayerHeadPosition( int playerIndex, float *position );
 
 static bool V_IsSniperWeapon( int weapon )
 {
@@ -95,9 +100,35 @@ static float V_GetAimAngle( const ref_params_t *pparams, const float *point, flo
 	if ( dot < -1.0f ) dot = -1.0f;
 
 	VectorAngles( direction, angles );
+	// VectorAngles returns positive pitch for a vector above us; view angles
+	// use negative pitch to look up (as in the chase-camera code below).
 	angles[PITCH] = -angles[PITCH];
 	angles[ROLL] = 0.0f;
 	return acosf( dot ) * ( 180.0f / (float)M_PI );
+}
+
+static void V_GetAimHeadPosition( cl_entity_t *ent, float *position )
+{
+	if ( Studio_GetPlayerHeadPosition( ent->index, position ) )
+	{
+		// Ignore a cached pose if this entity has moved far since it was rendered.
+		vec3_t offset;
+		VectorSubtract( position, ent->origin, offset );
+		if ( Length( offset ) < 96.0f )
+			return;
+	}
+
+	// Fallback for models without a head hitbox (group 1).
+	VectorCopy( ent->origin, position );
+	position[2] += ent->curstate.usehull ? 30.0f : 64.0f;
+}
+
+static float V_AimAngleDelta( float from, float to )
+{
+	float delta = fmodf( to - from + 180.0f, 360.0f );
+	if ( delta < 0.0f )
+		delta += 360.0f;
+	return delta - 180.0f;
 }
 
 static cl_entity_t *V_FindAimTarget( ref_params_t *pparams, float fov, float *aimAngles )
@@ -108,7 +139,6 @@ static cl_entity_t *V_FindAimTarget( ref_params_t *pparams, float fov, float *ai
 
 	cl_entity_t *best = NULL;
 	float bestAngle = fov;
-	vec3_t body;
 	for ( int i = 1; i <= gEngfuncs.GetMaxClients(); ++i )
 	{
 		if ( i == local->index || !g_PlayerInfoList[i].name || !g_PlayerInfoList[i].name[0] ||
@@ -117,26 +147,20 @@ static cl_entity_t *V_FindAimTarget( ref_params_t *pparams, float fov, float *ai
 			continue;
 
 		cl_entity_t *ent = gEngfuncs.GetEntityByIndex( i );
-		if ( !ent || !ent->player || ent->curstate.solid == SOLID_NOT )
+		if ( !ent || !ent->player )
 			continue;
 
-		VectorCopy( ent->origin, body );
-		body[2] += ent->curstate.usehull ? 18.0f : 36.0f;
-		vec3_t bodyAngles;
-		float angle = V_GetAimAngle( pparams, body, bodyAngles );
+		// Score the same point we aim at. Scoring the torso and then aiming at
+		// the head can select a target outside the requested head FOV.
+		vec3_t head, headAngles;
+		V_GetAimHeadPosition( ent, head );
+		float angle = V_GetAimAngle( pparams, head, headAngles );
 		if ( angle < bestAngle )
 		{
 			best = ent;
 			bestAngle = angle;
+			VectorCopy( headAngles, aimAngles );
 		}
-	}
-
-	if ( best )
-	{
-		vec3_t head;
-		VectorCopy( best->origin, head );
-		head[2] += best->curstate.usehull ? 30.0f : 64.0f;
-		V_GetAimAngle( pparams, head, aimAngles );
 	}
 	return best;
 }
@@ -148,30 +172,46 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	float fov = aim_head_fov ? aim_head_fov->value : 0.0f;
 	int weapon = HUD_GetWeapon();
 	bool sniper = V_IsSniperWeapon( weapon );
+	bool manualInput = false;
+
+	if ( s_iAimTarget > 0 && s_bAimHasAppliedAngles )
+	{
+		manualInput = fabsf( V_AimAngleDelta( s_vecAimAppliedAngles[PITCH], pparams->cl_viewangles[PITCH] ) ) > 1.5f ||
+			fabsf( V_AimAngleDelta( s_vecAimAppliedAngles[YAW], pparams->cl_viewangles[YAW] ) ) > 1.5f;
+		if ( manualInput )
+			s_bAimManualOverride = true;
+	}
 
 	if ( fov > 0.0f && pparams->health > 0 && !gEngfuncs.IsSpectateOnly() &&
 		 !CL_IsThirdPerson() && pparams->viewentity <= pparams->maxclients )
 	{
+		// After a manual mouse turn, wait until the crosshair leaves the acquire
+		// cone before allowing a new lock. This avoids instantly snapping back.
+		if ( s_bAimManualOverride && !V_FindAimTarget( pparams, fov, aimAngles ) )
+			s_bAimManualOverride = false;
+
 		// Keep the lock while close to the aimed head; acquire new targets only
 		// when the crosshair is inside the configured body-angle threshold.
-		if ( s_iAimTarget > 0 )
+		if ( !s_bAimManualOverride && s_iAimTarget > 0 )
 		{
-			cl_entity_t *locked = gEngfuncs.GetEntityByIndex( s_iAimTarget );
-			if ( locked && locked->player && s_iAimTarget <= gEngfuncs.GetMaxClients() &&
+			cl_entity_t *locked = s_iAimTarget <= gEngfuncs.GetMaxClients() ?
+				gEngfuncs.GetEntityByIndex( s_iAimTarget ) : NULL;
+			if ( locked && locked->player &&
 				 g_PlayerInfoList[s_iAimTarget].name && !g_PlayerExtraInfo[s_iAimTarget].dead &&
 				 ( g_PlayerExtraInfo[s_iAimTarget].teamnumber == TEAM_TERRORIST ||
 				   g_PlayerExtraInfo[s_iAimTarget].teamnumber == TEAM_CT ) &&
 				 g_PlayerExtraInfo[s_iAimTarget].teamnumber != g_iTeamNumber )
 			{
 				vec3_t head;
-				VectorCopy( locked->origin, head );
-				head[2] += locked->curstate.usehull ? 30.0f : 64.0f;
+				V_GetAimHeadPosition( locked, head );
+				// A small manual turn releases the lock, so the assist does not
+				// continually pull the user's view back to the target.
 				if ( V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) )
 					target = locked;
 			}
 		}
 
-		if ( !target )
+		if ( !target && !s_bAimManualOverride )
 			target = V_FindAimTarget( pparams, fov, aimAngles );
 	}
 
@@ -182,6 +222,8 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 		VectorCopy( aimAngles, pparams->cl_viewangles );
 		VectorCopy( aimAngles, v_angles );
 		VectorCopy( aimAngles, v_cl_angles );
+		VectorCopy( aimAngles, s_vecAimAppliedAngles );
+		s_bAimHasAppliedAngles = true;
 		gEngfuncs.SetViewAngles( aimAngles );
 
 		if ( !s_bAimAttackHeld || weapon != s_iAimWeapon )
@@ -217,6 +259,7 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 		s_bAimAttackHeld = false;
 		s_bAimScopeHeld = false;
 		s_iAimWeapon = 0;
+		s_bAimHasAppliedAngles = false;
 	}
 }
 
