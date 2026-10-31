@@ -73,10 +73,7 @@ static cvar_t *aim_head_fov;
 static int s_iAimTarget = 0;
 static bool s_bAimManualOverride = false;
 static bool s_bAimHasAppliedAngles = false;
-static bool s_bAimFiringLock = false;
-static int s_iAimFiringTarget = 0;
 static vec3_t s_vecAimAppliedAngles;
-static vec3_t s_vecAimFiringAngles;
 
 extern bool Studio_GetPlayerHeadPosition( int playerIndex, const float *entityOrigin, float *position );
 
@@ -191,7 +188,6 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	vec3_t aimAngles;
 	float fov = aim_head_fov ? aim_head_fov->value : 0.0f;
 	fov = fminf( fmaxf( fov, 0.0f ), 180.0f );
-	const bool firing = ( gHUD.m_iKeyBits & ( IN_ATTACK | IN_ATTACK2 ) ) != 0;
 	bool manualInput = false;
 
 	if ( s_iAimTarget > 0 && s_bAimHasAppliedAngles )
@@ -225,14 +221,9 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 			{
 				vec3_t head;
 				V_GetAimHeadPosition( locked, head );
-				const bool keepFiringLock = firing && s_iAimTarget == locked->index;
 				if ( V_IsAimTargetVisible( pparams, head ) &&
-					 ( keepFiringLock || V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) ) )
-				{
+					 V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) )
 					target = locked;
-					if ( keepFiringLock )
-						V_GetAimAngle( pparams, head, aimAngles );
-				}
 			}
 		}
 
@@ -247,21 +238,6 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	if ( target )
 	{
 		s_iAimTarget = target->index;
-		if ( firing )
-		{
-			if ( !s_bAimFiringLock || s_iAimFiringTarget != target->index )
-			{
-				VectorCopy( aimAngles, s_vecAimFiringAngles );
-				s_iAimFiringTarget = target->index;
-			}
-			s_bAimFiringLock = true;
-			VectorCopy( s_vecAimFiringAngles, aimAngles );
-		}
-		else
-		{
-			s_bAimFiringLock = false;
-			s_iAimFiringTarget = 0;
-		}
 		VectorCopy( aimAngles, pparams->viewangles );
 		VectorCopy( aimAngles, pparams->cl_viewangles );
 		VectorCopy( aimAngles, v_angles );
@@ -274,8 +250,6 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	{
 		s_iAimTarget = 0;
 		s_bAimHasAppliedAngles = false;
-		s_bAimFiringLock = false;
-		s_iAimFiringTarget = 0;
 	}
 }
 
