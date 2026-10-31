@@ -282,6 +282,7 @@ int __MsgFunc_ReceiveW(const char *pszName, int iSize, void *pbuf)
 void CHud :: Init( void )
 {
 	SetGameType(); // call it first, so we will know gamedir at very early stage
+	m_Esp.Init();
 
 	HOOK_COMMAND_FUNC( "special", __CmdFunc_InputCommandSpecial, );
 	HOOK_COMMAND_FUNC( "gunsmoke", __CmdFunc_GunSmoke, );

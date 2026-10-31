@@ -945,6 +945,18 @@ private:
 //-----------------------------------------------------
 //
 
+class CHudEsp : public CHudBase
+{
+public:
+	int Init( void );
+	int VidInit( void );
+	int Draw( float flTime );
+};
+
+//
+//-----------------------------------------------------
+//
+
 class CHudSpectatorGui: public CHudBase
 {
 public:
@@ -1128,6 +1140,7 @@ public:
 	CHudRadar       m_Radar;
 	CHudSpectatorGui m_SpectatorGui;
 	CHudScenario	m_Scenario;
+	CHudEsp         m_Esp; 
 
 	// user messages
 	CHudMsgFunc(Damage);
