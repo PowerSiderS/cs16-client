@@ -42,6 +42,55 @@
 
 extern bool ESP_GetPlayerHighlightColor( int playerIndex, int &r, int &g, int &b );
 
+#if defined(_WIN32)
+#define ESP_GL_CALL __stdcall
+#else
+#define ESP_GL_CALL
+#endif
+
+typedef unsigned char (ESP_GL_CALL *esp_gl_is_enabled_fn)(unsigned int);
+typedef void (ESP_GL_CALL *esp_gl_get_boolean_fn)(unsigned int, unsigned char *);
+typedef void (ESP_GL_CALL *esp_gl_toggle_fn)(unsigned int);
+typedef void (ESP_GL_CALL *esp_gl_depth_mask_fn)(unsigned char);
+
+struct esp_gl_depth_state_t
+{
+	esp_gl_toggle_fn enable;
+	esp_gl_toggle_fn disable;
+	esp_gl_depth_mask_fn depthMask;
+	bool depthTestEnabled;
+	unsigned char depthWriteEnabled;
+};
+
+static bool ESP_BeginXrayPass( esp_gl_depth_state_t &state )
+{
+	if ( !gRenderAPI.GL_GetProcAddress )
+		return false;
+
+	esp_gl_is_enabled_fn isEnabled = (esp_gl_is_enabled_fn)gRenderAPI.GL_GetProcAddress( "glIsEnabled" );
+	esp_gl_get_boolean_fn getBoolean = (esp_gl_get_boolean_fn)gRenderAPI.GL_GetProcAddress( "glGetBooleanv" );
+	state.enable = (esp_gl_toggle_fn)gRenderAPI.GL_GetProcAddress( "glEnable" );
+	state.disable = (esp_gl_toggle_fn)gRenderAPI.GL_GetProcAddress( "glDisable" );
+	state.depthMask = (esp_gl_depth_mask_fn)gRenderAPI.GL_GetProcAddress( "glDepthMask" );
+	if ( !isEnabled || !getBoolean || !state.enable || !state.disable || !state.depthMask )
+		return false;
+
+	state.depthTestEnabled = isEnabled( 0x0B71 ) != 0; // GL_DEPTH_TEST
+	getBoolean( 0x0B72, &state.depthWriteEnabled ); // GL_DEPTH_WRITEMASK
+	state.disable( 0x0B71 );
+	state.depthMask( 0 );
+	return true;
+}
+
+static void ESP_EndXrayPass( const esp_gl_depth_state_t &state )
+{
+	state.depthMask( state.depthWriteEnabled );
+	if ( state.depthTestEnabled )
+		state.enable( 0x0B71 );
+	else
+		state.disable( 0x0B71 );
+}
+
 #define ANIM_WALK_SEQUENCE 3
 #define ANIM_JUMP_SEQUENCE 6
 #define ANIM_SWIM_1 8
@@ -1158,24 +1207,33 @@ int R_StudioDrawPlayer(int flags, entity_state_t *pplayer)
 	int r, g, b;
 	bool highlighted = pCurrentEntity && ESP_GetPlayerHighlightColor( pCurrentEntity->index, r, g, b );
 	int oldRenderFx = 0;
+	int oldRenderMode = 0;
 	int oldRenderAmt = 0;
 	color24 oldRenderColor = {};
+	esp_gl_depth_state_t depthState = {};
+	bool xrayPass = false;
 	if ( highlighted )
 	{
 		oldRenderFx = pCurrentEntity->curstate.renderfx;
+		oldRenderMode = pCurrentEntity->curstate.rendermode;
 		oldRenderAmt = pCurrentEntity->curstate.renderamt;
 		oldRenderColor = pCurrentEntity->curstate.rendercolor;
-		pCurrentEntity->curstate.renderfx = kRenderFxGlowShell;
+		pCurrentEntity->curstate.renderfx = kRenderFxNone;
+		pCurrentEntity->curstate.rendermode = kRenderTransColor;
 		pCurrentEntity->curstate.rendercolor.r = (byte)r;
 		pCurrentEntity->curstate.rendercolor.g = (byte)g;
 		pCurrentEntity->curstate.rendercolor.b = (byte)b;
 		pCurrentEntity->curstate.renderamt = 255;
+		xrayPass = ESP_BeginXrayPass( depthState );
 	}
 
 	int result = g_StudioRenderer.StudioDrawPlayer(flags, pplayer);
+	if ( xrayPass )
+		ESP_EndXrayPass( depthState );
 	if ( highlighted )
 	{
 		pCurrentEntity->curstate.renderfx = oldRenderFx;
+		pCurrentEntity->curstate.rendermode = oldRenderMode;
 		pCurrentEntity->curstate.renderamt = oldRenderAmt;
 		pCurrentEntity->curstate.rendercolor = oldRenderColor;
 	}
