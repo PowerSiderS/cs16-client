@@ -73,7 +73,10 @@ static cvar_t *aim_head_fov;
 static int s_iAimTarget = 0;
 static bool s_bAimManualOverride = false;
 static bool s_bAimHasAppliedAngles = false;
+static bool s_bAimFiringLock = false;
+static int s_iAimFiringTarget = 0;
 static vec3_t s_vecAimAppliedAngles;
+static vec3_t s_vecAimFiringAngles;
 
 extern bool Studio_GetPlayerHeadPosition( int playerIndex, const float *entityOrigin, float *position );
 
@@ -89,10 +92,14 @@ static float V_GetAimAngle( const ref_params_t *pparams, const float *point, flo
 	if ( dot > 1.0f ) dot = 1.0f;
 	if ( dot < -1.0f ) dot = -1.0f;
 
-	VectorAngles( direction, angles );
-	// VectorAngles returns positive pitch for a vector above us; view angles
-	// use negative pitch to look up (as in the chase-camera code below).
-	angles[PITCH] = -angles[PITCH];
+	// Return view pitch in the native [-90, 90] range. VectorAngles wraps
+	// downward directions to about 360 degrees, which can become an upward
+	// snap when passed through the client view-angle path.
+	const float horizontal = sqrtf( direction[0] * direction[0] + direction[1] * direction[1] );
+	angles[PITCH] = -atan2f( direction[2], horizontal ) * ( 180.0f / (float)M_PI );
+	angles[YAW] = atan2f( direction[1], direction[0] ) * ( 180.0f / (float)M_PI );
+	if ( angles[YAW] < 0.0f )
+		angles[YAW] += 360.0f;
 	angles[ROLL] = 0.0f;
 	return acosf( dot ) * ( 180.0f / (float)M_PI );
 }
@@ -184,6 +191,7 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	vec3_t aimAngles;
 	float fov = aim_head_fov ? aim_head_fov->value : 0.0f;
 	fov = fminf( fmaxf( fov, 0.0f ), 180.0f );
+	const bool firing = ( gHUD.m_iKeyBits & ( IN_ATTACK | IN_ATTACK2 ) ) != 0;
 	bool manualInput = false;
 
 	if ( s_iAimTarget > 0 && s_bAimHasAppliedAngles )
@@ -217,9 +225,14 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 			{
 				vec3_t head;
 				V_GetAimHeadPosition( locked, head );
+				const bool keepFiringLock = firing && s_iAimTarget == locked->index;
 				if ( V_IsAimTargetVisible( pparams, head ) &&
-					 V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) )
+					 ( keepFiringLock || V_GetAimAngle( pparams, head, aimAngles ) <= fmaxf( 12.0f, fov * 3.0f ) ) )
+				{
 					target = locked;
+					if ( keepFiringLock )
+						V_GetAimAngle( pparams, head, aimAngles );
+				}
 			}
 		}
 
@@ -234,6 +247,21 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	if ( target )
 	{
 		s_iAimTarget = target->index;
+		if ( firing )
+		{
+			if ( !s_bAimFiringLock || s_iAimFiringTarget != target->index )
+			{
+				VectorCopy( aimAngles, s_vecAimFiringAngles );
+				s_iAimFiringTarget = target->index;
+			}
+			s_bAimFiringLock = true;
+			VectorCopy( s_vecAimFiringAngles, aimAngles );
+		}
+		else
+		{
+			s_bAimFiringLock = false;
+			s_iAimFiringTarget = 0;
+		}
 		VectorCopy( aimAngles, pparams->viewangles );
 		VectorCopy( aimAngles, pparams->cl_viewangles );
 		VectorCopy( aimAngles, v_angles );
@@ -246,6 +274,8 @@ static void V_UpdateAimAssist( ref_params_t *pparams )
 	{
 		s_iAimTarget = 0;
 		s_bAimHasAppliedAngles = false;
+		s_bAimFiringLock = false;
+		s_iAimFiringTarget = 0;
 	}
 }
 
