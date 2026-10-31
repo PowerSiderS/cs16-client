@@ -46,6 +46,18 @@ extern CGameStudioModelRenderer g_StudioRenderer;
 extern engine_studio_api_t IEngineStudio;
 typedef struct pmtrace_s pmtrace_t;
 
+static void StudioApplyESPTeamTint( alight_t &lighting )
+{
+	cl_entity_t *ent = IEngineStudio.GetCurrentEntity();
+	int r, g, b;
+	if ( !ent || !ESP_GetPlayerHighlightColor( ent->index, r, g, b ) )
+		return;
+
+	lighting.color[0] = r / 255.0f;
+	lighting.color[1] = g / 255.0f;
+	lighting.color[2] = b / 255.0f;
+}
+
 void CStudioModelRenderer::Init(void)
 {
 	m_pCvarHiModels = IEngineStudio.GetCvar("cl_himodels");
@@ -939,6 +951,7 @@ int CStudioModelRenderer::StudioDrawModel(int flags)
 		IEngineStudio.StudioDynamicLight(m_pCurrentEntity, &lighting);
 
 		IEngineStudio.StudioEntityLight(&lighting);
+		StudioApplyESPTeamTint( lighting );
 		IEngineStudio.StudioSetupLighting(&lighting);
 
 		m_nTopColor = m_pCurrentEntity->curstate.colormap & 0xFF;
@@ -1202,6 +1215,7 @@ int CStudioModelRenderer::StudioDrawPlayer(int flags, entity_state_t *pplayer)
 
 		IEngineStudio.StudioDynamicLight(m_pCurrentEntity, &lighting);
 		IEngineStudio.StudioEntityLight(&lighting);
+		StudioApplyESPTeamTint( lighting );
 		IEngineStudio.StudioSetupLighting(&lighting);
 
 		m_pPlayerInfo = IEngineStudio.PlayerInfo(m_nPlayerIndex);
