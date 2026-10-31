@@ -44,7 +44,6 @@
 extern float	vJumpOrigin[3];
 extern float	vJumpAngles[3];
 
-
 extern engine_studio_api_t IEngineStudio;
 
 /*
@@ -1547,8 +1546,6 @@ void V_GetDoubleTargetsCam(cl_entity_t	 * ent1, cl_entity_t * ent2,float * angle
 	/* take middle between two viewangles
 	InterpolateAngles( newAngle, tempVec, newAngle, 0.5f); */
 
-
-
 }
 
 void V_GetDirectedChasePosition(cl_entity_t	 * ent1, cl_entity_t * ent2,float * angle, float * origin)
@@ -1679,7 +1676,6 @@ void V_GetInEyePos(int target, float * origin, float * angles )
 		VectorCopy ( vJumpOrigin, origin );
 		return;
 	};
-
 
 	cl_entity_t	 * ent = gEngfuncs.GetEntityByIndex( target );
 
