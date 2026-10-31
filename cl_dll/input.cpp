@@ -749,19 +749,9 @@ void DLLEXPORT CL_CreateMove ( float frametime, struct usercmd_s *cmd, int activ
 	// +bhoptap: while held, jump is fired on every ground frame (auto bhop).
 	// +gs: alternate duck on ground frames and release it in the air.
 	{
-		int iOnGround = 0;
-
-		// primary ground state: client prediction flags
-		if ( g_iPlayerFlags & FL_ONGROUND )
-			iOnGround = 1;
-
-		// fallback: local player entity state (onground is -1 while airborne)
-		if ( !iOnGround )
-		{
-			cl_entity_t *ent = gEngfuncs.GetLocalPlayer();
-			if ( ent && ent->curstate.onground != -1 )
-				iOnGround = 1;
-		}
+		// Use the prediction state. curstate.onground is the last received
+		// network entity state and can still report ground contact after takeoff.
+		const bool iOnGround = (g_iPlayerFlags & FL_ONGROUND) != 0;
 
 		// +bhoptap: press IN_JUMP exactly on ground frames
 		if ( in_bhoptap.state & 1 )
