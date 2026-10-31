@@ -4,10 +4,10 @@
 #include "hud.h"
 #include "cl_util.h"
 #include "triangleapi.h"
+#include "com_weapons.h"
+#include "draw_util.h"
 #include <math.h>
-
-ConVar* esp_enable;
-// (declared below with CVAR_CREATE, kept as cvar_t* — see code)
+#include <stdio.h>
 
 cvar_t *esp_enable_cvar;
 cvar_t *esp_name_cvar;
@@ -94,14 +94,7 @@ int CHudEsp::Draw( float flTime )
 		if ( gEngfuncs.pTriAPI->WorldToScreen( vHead, sHead ) )
 			continue;
 
-		// skip offscreen / degenerate
-		if ( sFeet[0] < -1.5f || sFeet[0] > 1.5f || sHead[0] < -1.5f || sHead[0] > 1.5f )
-			continue;
-		if ( sFeet[1] < -1.5f || sFeet[1] > 1.5f || sHead[1] < -1.5f || sHead[1] > 1.5f )
-			continue;
-
 		// to pixels
-		int xFeet = (int)( ( 1.0f + sFeet[0] ) * ScreenWidth  * 0.5f );
 		int yFeet = (int)( ( 1.0f - sFeet[1] ) * ScreenHeight * 0.5f );
 		int xHead = (int)( ( 1.0f + sHead[0] ) * ScreenWidth  * 0.5f );
 		int yHead = (int)( ( 1.0f - sHead[1] ) * ScreenHeight * 0.5f );
@@ -121,14 +114,28 @@ int CHudEsp::Draw( float flTime )
 
 		int x0 = xHead - boxW / 2;
 		int y0 = yHead;
+		int x1 = x0 + boxW;
+		int y1 = y0 + boxH;
+
+		// Clip partial boxes to the viewport; reject boxes completely outside it.
+		if ( x1 <= 0 || y1 <= 0 || x0 >= ScreenWidth || y0 >= ScreenHeight )
+			continue;
+		if ( x0 < 0 ) x0 = 0;
+		if ( y0 < 0 ) y0 = 0;
+		if ( x1 > ScreenWidth ) x1 = ScreenWidth;
+		if ( y1 > ScreenHeight ) y1 = ScreenHeight;
+		boxW = x1 - x0;
+		boxH = y1 - y0;
+		if ( boxW < 2 || boxH < 4 )
+			continue;
 
 		ESP_DrawBox( x0, y0, boxW, boxH, r, g, b, 200 );
 
 		// name
 		if ( esp_name_cvar->value )
 		{
-			gEngfuncs.pfnDrawSetTextColor( (float)r / 255.0f, (float)g / 255.0f, (float)b / 255.0f );
-			gEngfuncs.pfnDrawConsoleString( x0, y0 - gHUD.m_iFontHeight - 2, g_PlayerInfoList[i].name );
+			DrawUtils::SetConsoleTextColor( (float)r / 255.0f, (float)g / 255.0f, (float)b / 255.0f );
+			DrawUtils::DrawConsoleString( x0, y0 - gHUD.m_iFontHeight - 2, g_PlayerInfoList[i].name );
 		}
 
 		// distance in meters (1 unit = 1 inch => * 0.0254)
@@ -142,8 +149,8 @@ int CHudEsp::Draw( float flTime )
 			char sz[16];
 			snprintf( sz, sizeof( sz ), "%dm", meters );
 
-			gEngfuncs.pfnDrawSetTextColor( 0.8f, 0.8f, 0.8f );
-			gEngfuncs.pfnDrawConsoleString( x0, yFeet + 2, sz );
+			DrawUtils::SetConsoleTextColor( 0.8f, 0.8f, 0.8f );
+			DrawUtils::DrawConsoleString( x0, y1 + 2, sz );
 		}
 	}
 
